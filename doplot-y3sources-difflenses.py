@@ -140,6 +140,8 @@ def plot_bin(*, plt, y1, y3, nzs3, nzl1, nzl3, lbin, sbin, label):
     ds1 = y1['value'][w1]/siginv1/y3_oneplusm
     ds3 = y3['value'][w3]/siginv3/y3_oneplusm
 
+    # did y1 lenses get put into y3 z bins?  If so, these should
+    # actually be the same
     r1 = np.deg2rad(y1['ang'][w1]/60)*Y1_CHI_FACTORS[lbin-1]
     r3 = np.deg2rad(y3['ang'][w3]/60)*Y3_CHI_FACTORS[lbin-1]
     ds1_interp = interpolate_y1_onto_y3(r3, r1, ds1)
