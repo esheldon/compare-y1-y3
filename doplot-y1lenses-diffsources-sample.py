@@ -11,6 +11,12 @@ y1lenses_y1sources = '2pt_NG_mcal_1110.fits'
 # we use the unboosted data vectors for comparision with Y1 unboosted data
 y1lenses_y3sources_noboost = '/home/esheldon/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_y1/zllim_y1/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_twopointfile.fits'  # noqa
 
+# new version limiting y3 sources to y1 footprint and using mean R from
+# that
+
+
+y1lenses_y3sources_noboost_y1area = '/home/esheldon/git/xcorr/runs/y1lenses/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT_y1footprint/zslim_som/zs_som/redmagic_y1/zllim_y1/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_twopointfile.fits'
+
 # we need to get the n(zl) from here, the new run did not have the correct
 # values in it
 # also has gammat for y3y3
@@ -53,9 +59,7 @@ def get_args():
 
 def read_data():
     """
-    read data for both y1 and y3 sources.  A random y3 source n(z)
-    is read from disk each time this code is run
-
+    read data for both y1 and y3 sources.
     Returns
     --------
     data: dict
@@ -67,8 +71,14 @@ def read_data():
             'nzl': redshift and n(z) for the lenses for all l/s bins
             'nzs': redshift and n(z) for the sources for all l/s bins
     """
-    i = np.random.randint(1000)
-    sname_y1y3 = 'nz_source_realisation_%d' % i
+    sname_y1y3 = 'nz_source_realisation_%d'
+
+    with fitsio.FITS(y3sources, lower=True) as fits:
+        nzs_samples = []
+        for i in range(1000):
+            sname = sname_y1y3 % i
+            tmp = fits[sname][:]
+            nzs_samples.append(tmp)
 
     data = {
         'y1y1': {
@@ -77,9 +87,11 @@ def read_data():
             'nzs': fitsio.read(y1lenses_y1sources, ext='nz_source', lower=True),  # noqa
         },
         'y1y3': {
-            'gammat':  fitsio.read(y1lenses_y3sources_noboost, ext='gammat', lower=True),  # noqa
+            # 'gammat':  fitsio.read(y1lenses_y3sources_noboost, ext='gammat', lower=True),  # noqa
+            'gammat':  fitsio.read(y1lenses_y3sources_noboost_y1area, ext='gammat', lower=True),  # noqa
             'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
-            'nzs': fitsio.read(y3sources, ext=sname_y1y3, lower=True),  # noqa
+            'nzs_samples': nzs_samples,
+            # 'nzs': fitsio.read(y3sources, ext=sname_y1y3, lower=True),  # noqa
         }
     }
 
@@ -123,9 +135,11 @@ def interpolate_y1_onto_y3(r3, r1, ds1):
 
 def get_nofz(*, data, lbin, sbin):
     """
-    get n(z) data for the given lens and source bin.  the Y1
-    n(z) are shifted according to the prior each time this
-    is called
+    get n(z) data for the given lens and source bin.  A random y3 source n(z)
+    is used each time this code is called
+
+
+    the Y1 n(z) are shifted according to the prior each time this is called
 
     data: dict
         Dictionary of arrays, keyed by
@@ -149,6 +163,9 @@ def get_nofz(*, data, lbin, sbin):
         'szbin': source z grid
         'snofz': n(zs) on z grid
     """
+
+    i = np.random.randint(1000)
+    y1y3_nzs = data['y1y3']['nzs_samples'][i]
 
     lbin_name = 'bin%d' % lbin
     sbin_name = 'bin%d' % sbin
@@ -176,8 +193,10 @@ def get_nofz(*, data, lbin, sbin):
         'y1y3': {
             'lzbin': data['y1y3']['nzl']['z_mid'],
             'lnofz': data['y1y3']['nzl'][lbin_name],
-            'szbin': data['y1y3']['nzs']['z_mid'],
-            'snofz': data['y1y3']['nzs'][sbin_name],
+            'szbin': y1y3_nzs['z_mid'],
+            'snofz': y1y3_nzs[sbin_name],
+            # 'szbin': data['y1y3']['nzs']['z_mid'],
+            # 'snofz': data['y1y3']['nzs'][sbin_name],
         }
     }
     return zdata
@@ -355,6 +374,7 @@ def main():
             key = 'S%d-L%d' % (sbin, lbin)
             dlists[key] = []
 
+    data = read_data()
     for sbin in sbins:
 
         tab = hickory.Table(
@@ -393,7 +413,6 @@ def main():
         tab[1, 1].ntext(0.1, 0.9, 'sbin %d, lbin 4' % sbin)
 
         for trial in range(args.ntrial):
-            data = read_data()
 
             if trial == 0:
                 dolabel = True
