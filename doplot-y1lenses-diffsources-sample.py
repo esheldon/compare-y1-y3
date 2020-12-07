@@ -3,11 +3,16 @@ import hickory
 import numpy as np
 import esutil as eu
 
+# public data vectors for Y1
 y1lenses_y1sources = '2pt_NG_mcal_1110.fits'
 
 # y1lenses_y3sources = '/home/esheldon/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_y1/zllim_y1/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
+
+# we use the unboosted data vectors for comparision with Y1 unboosted data
 y1lenses_y3sources_noboost = '/home/esheldon/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_y1/zllim_y1/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_twopointfile.fits'  # noqa
 
+# we need to get the n(zl) from here, the new run did not have the correct
+# values in it
 # also has gammat for y3y3
 y3sources = '2pt_NG_final_2ptunblind_11_13_20_wnz.fits'
 
@@ -36,7 +41,6 @@ Y1_ZS_OFFSETS = np.array([
 Y1_ZS_OFFSETS /= 100
 
 
-
 def get_args():
     import argparse
     parser = argparse.ArgumentParser()
@@ -47,8 +51,22 @@ def get_args():
     return parser.parse_args()
 
 
-def read_data(args):
+def read_data():
+    """
+    read data for both y1 and y3 sources.  A random y3 source n(z)
+    is read from disk each time this code is run
 
+    Returns
+    --------
+    data: dict
+        Dictionary of arrays, keyed by
+            y1y1: y1 lenses, y1 sources
+            y1y3: y1 lenses, y3 sources
+        The data for each key is
+            'gammat': The gamma_t data vector for all l/s bins
+            'nzl': redshift and n(z) for the lenses for all l/s bins
+            'nzs': redshift and n(z) for the sources for all l/s bins
+    """
     i = np.random.randint(1000)
     sname_y1y3 = 'nz_source_realisation_%d' % i
 
@@ -59,17 +77,110 @@ def read_data(args):
             'nzs': fitsio.read(y1lenses_y1sources, ext='nz_source', lower=True),  # noqa
         },
         'y1y3': {
-            # 'gammat':  fitsio.read(y1lenses_y3sources, ext='gammat', lower=True),  # noqa
             'gammat':  fitsio.read(y1lenses_y3sources_noboost, ext='gammat', lower=True),  # noqa
-            # these are wrong, actually same binning as Y1 was used
-            # 'nzl': fitsio.read(y1lenses_y3sources, ext='nz_lens', lower=True),  # noqa
             'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
-            # 'nzs': fitsio.read(y1lenses_y3sources, ext='nz_source', lower=True),  # noqa
             'nzs': fitsio.read(y3sources, ext=sname_y1y3, lower=True),  # noqa
         }
     }
 
     return data
+
+
+def interpolate_y1_onto_y3(r3, r1, ds1):
+    """
+    interpolate the Y1 delta sigma measurements at the Y3 mean radii
+
+    r3: array
+        Array of Y3 radii
+    r1: array
+        Array of Y1 radii
+    ds1: array
+        Array of Y1 DeltaSigma
+
+    Returns
+    -------
+    Delta Sigma interpolated to Y3 radii
+    """
+    ds1_interp = np.interp(
+        r3, r1, ds1,
+    )
+
+    if False:
+        plt = hickory.Plot()
+        plt.plot(r1, ds1, label='y1 binning')
+        plt.plot(r3, ds1_interp, label='interp')
+        plt.set(
+            xlabel=r'$R [\mathrm{Mpc}]$',
+            ylabel=r'$\Delta\Sigma$',
+        )
+        plt.set_xscale('log')
+        plt.set_yscale('log')
+        plt.legend()
+        plt.show()
+
+    return ds1_interp
+
+
+def get_nofz(*, data, lbin, sbin):
+    """
+    get n(z) data for the given lens and source bin.  the Y1
+    n(z) are shifted according to the prior each time this
+    is called
+
+    data: dict
+        Dictionary of arrays, keyed by
+            y1y1: y1 lenses, y1 sources
+            y1y3: y1 lenses, y3 sources
+        The data for each key is
+            'gammat': The gamma_t data vector for all l/s bins
+            'nzl': redshift and n(z) for the lenses for all l/s bins
+            'nzs': redshift and n(z) for the sources for all l/s bins
+    lbin: int
+        lens bin, 1 offset
+    sbin: int
+        source bin, 1 offst
+
+    Returns
+    -------
+    dict keyed by y1y1 or y1y3 with the particular data from the
+    requested lens/source bins.  Each key has entries
+        'lzbin': lens z grid
+        'lnofz': n(zl) on the grid
+        'szbin': source z grid
+        'snofz': n(zs) on z grid
+    """
+
+    lbin_name = 'bin%d' % lbin
+    sbin_name = 'bin%d' % sbin
+
+    moff = Y1_ZS_OFFSETS[sbin-1][0]
+    woff = Y1_ZS_OFFSETS[sbin-1][1]
+    z1off = np.random.normal(
+        loc=moff,
+        scale=woff,
+    )
+
+    y1_zs = data['y1y1']['nzs']['z_mid'] + z1off
+
+    w, = np.where(y1_zs > 0)
+    y1_zs = y1_zs[w]
+    y1_nofzs = data['y1y1']['nzs'][sbin_name][w]
+
+    zdata = {
+        'y1y1': {
+            'lzbin': data['y1y1']['nzl']['z_mid'],
+            'lnofz': data['y1y1']['nzl'][lbin_name],
+            'szbin': y1_zs,
+            'snofz': y1_nofzs,
+        },
+        'y1y3': {
+            'lzbin': data['y1y3']['nzl']['z_mid'],
+            'lnofz': data['y1y3']['nzl'][lbin_name],
+            'szbin': data['y1y3']['nzs']['z_mid'],
+            'snofz': data['y1y3']['nzs'][sbin_name],
+        }
+    }
+    return zdata
 
 
 def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs):
@@ -103,75 +214,32 @@ def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs):
     return F
 
 
-def interpolate_y1_onto_y3(r3, r1, ds1):
-    ds1_interp = np.interp(
-        r3, r1, ds1,
-    )
-
-    if False:
-        plt = hickory.Plot()
-        plt.plot(r1, ds1, label='y1 binning')
-        plt.plot(r3, ds1_interp, label='interp')
-        plt.set(
-            xlabel=r'$R [\mathrm{Mpc}]$',
-            ylabel=r'$\Delta\Sigma$',
-        )
-        plt.set_xscale('log')
-        plt.set_yscale('log')
-        plt.legend()
-        plt.show()
-
-    return ds1_interp
-
-
-def get_nofz(*, data, lbin, sbin):
-
-    lbin_name = 'bin%d' % lbin
-    sbin_name = 'bin%d' % sbin
-
-    moff = Y1_ZS_OFFSETS[sbin-1][0]
-    woff = Y1_ZS_OFFSETS[sbin-1][1]
-    # while True:
-    #     z1off = np.random.normal(
-    #         loc=moff,
-    #         scale=woff,
-    #     )
-    #     if np.abs(z1off - moff) < 3*woff:
-    #         break
-    # z1off = np.random.uniform(
-    #     low=moff - woff,
-    #     high=moff + woff,
-    # )
-    z1off = np.random.normal(
-        loc=moff,
-        scale=woff,
-    )
-
-    y1_zs = data['y1y1']['nzs']['z_mid'] + z1off
-
-    w, = np.where(y1_zs > 0)
-    y1_zs = y1_zs[w]
-    y1_nofzs = data['y1y1']['nzs'][sbin_name][w]
-
-    zdata = {
-        'y1y1': {
-            'lzbin': data['y1y1']['nzl']['z_mid'],
-            'lnofz': data['y1y1']['nzl'][lbin_name],
-            'szbin': y1_zs,
-            'snofz': y1_nofzs,
-        },
-        'y1y3': {
-            'lzbin': data['y1y3']['nzl']['z_mid'],
-            'lnofz': data['y1y3']['nzl'][lbin_name],
-            'szbin': data['y1y3']['nzs']['z_mid'],
-            'snofz': data['y1y3']['nzs'][sbin_name],
-        }
-    }
-    return zdata
-
-
 def plot_bin(*, plt, data, lbin, sbin, args, dolabel=False):
+    """
 
+    Calculate the fractional difference Y1/Y3-1 as a function of radius and
+    plot.   The m and y1 n(z) are sampled..  The input is expected to have a
+    random realization of Y3 source n(z).
+
+
+    Parameters
+    ----------
+    plt: the plot object
+        Curves will be added to the object
+    data: the data dict
+        See read_data() for the contents
+    lbin/sbin: int
+        lens and source bin indexes, 1 offset
+    args: parsed args
+        See get_args()
+    dolabel: bool
+        If True, add a label
+
+    Returns
+    -------
+    frac:  float
+        The overall mean fractional difference
+    """
     zdata = get_nofz(data=data, lbin=lbin, sbin=sbin)
 
     siginv_y1y1 = inv_sigma_crit_eff_fast(
@@ -227,7 +295,6 @@ def plot_bin(*, plt, data, lbin, sbin, args, dolabel=False):
     # interpolation might not be needed, same binning
     ds_y1y1_interp = interpolate_y1_onto_y3(r_y1y3, r_y1y1, ds_y1y1)
     frac = ds_y1y1_interp/ds_y1y3 - 1
-    # frac = np.abs(ds_y1y1_interp)/np.abs(ds_y1y3) - 1
 
     print('#'*70)
     print(sbin, lbin)
@@ -264,6 +331,10 @@ def plot_bin(*, plt, data, lbin, sbin, args, dolabel=False):
 
 
 def main():
+    """
+    calculate the fractional difference over all radii for realizations
+    of the N(z)
+    """
     args = get_args()
     xlabel = r'$R [\mathrm{Mpc}]$'
     xlim = 0.4, 200
@@ -322,7 +393,7 @@ def main():
         tab[1, 1].ntext(0.1, 0.9, 'sbin %d, lbin 4' % sbin)
 
         for trial in range(args.ntrial):
-            data = read_data(args)
+            data = read_data()
 
             if trial == 0:
                 dolabel = True
