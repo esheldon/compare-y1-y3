@@ -1,0 +1,487 @@
+#!/usr/bin/env python
+
+import fitsio
+import hickory
+import numpy as np
+import esutil as eu
+from compare_y1_y3.util import (
+    Y3_MVALS,
+    Y3_CHI_FACTORS,
+    # Y1_CHI_FACTORS,
+    inv_sigma_crit_eff_fast,
+)
+
+SBINS = list(range(1, 4+1))
+LBINS = list(range(1, 4+1))
+TYPES = ['all', 'lo', 'hi']
+
+y1lenses_y1sources = '2pt_NG_mcal_1110.fits'
+
+y3sources = '2pt_NG_final_2ptunblind_11_13_20_wnz.fits'
+
+y3lenses_y3sources_y3area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_x40randoms/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
+y3lenses_y3sources_y1area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT_y1footprint/zslim_som/zs_som/redmagic_x40randoms_year1footprint/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
+
+# y3lenses_y3sources_y3area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_x40randoms/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_twopointfile.fits'  # noqa
+# y3lenses_y3sources_y1area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT_y1footprint/zslim_som/zs_som/redmagic_x40randoms_year1footprint/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_twopointfile.fits'  # noqa
+
+
+def get_args():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--ntrial', type=int, default=1, help='trials for sampling')
+    parser.add_argument('--plot-dsig', action='store_true')
+    parser.add_argument('--sample', action='store_true')
+    return parser.parse_args()
+
+
+def read_data():
+    """
+    read data for both y1 and y3 sources.
+
+    Returns
+    --------
+    data: dict
+        Dictionary of arrays, keyed by
+            y1area: y1 lenses, y1 sources
+            y3area: y1 lenses, y3 sources
+        The data for each key is
+            'gammat': The gamma_t data vector for all l/s bins
+            'nzl': redshift and n(z) for the lenses for all l/s bins
+            'nzs': redshift and n(z) for the sources for all l/s bins
+    """
+    sname_y3 = 'nz_source_realisation_%d'
+
+    with fitsio.FITS(y3sources, lower=True) as fits:
+        nzs = fits['nz_source'][:]
+        nzs_samples = []
+        for i in range(1000):
+            sname = sname_y3 % i
+            tmp = fits[sname][:]
+            nzs_samples.append(tmp)
+
+    data = {
+        'y1area': {
+            'gammat': fitsio.read(y3lenses_y3sources_y1area, ext='gammat', lower=True),  # noqa
+            'gammat_cov': fitsio.read(y3lenses_y3sources_y1area, ext='covmat'),  # noqa
+            'nzl': fitsio.read(y3lenses_y3sources_y1area, ext='nz_lens', lower=True),  # noqa
+            # 'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
+            # 'nzl': fitsio.read(y3lenses_y3sources_y3area, ext='nz_lens', lower=True),  # noqa
+            'nzs_samples': nzs_samples,
+            'nzs': nzs,
+        },
+        'y3area': {
+            # 'gammat':  fitsio.read(y1lenses_y3sources_noboost, ext='gammat', lower=True),  # noqa
+            'gammat':  fitsio.read(y3lenses_y3sources_y3area, ext='gammat', lower=True),  # noqa
+            'gammat_cov':  fitsio.read(y3lenses_y3sources_y3area, ext='covmat'),  # noqa
+            'nzl': fitsio.read(y3lenses_y3sources_y3area, ext='nz_lens', lower=True),  # noqa
+            'nzs_samples': nzs_samples,
+            'nzs': nzs,
+        }
+    }
+
+    return data
+
+
+def get_nofz(*, data, lbin, sbin, sample):
+    """
+    get n(z) data for the given lens and source bin.  A random y3 source n(z)
+    is used each time this code is called
+
+
+    the Y1 n(z) are shifted according to the prior each time this is called
+
+    data: dict
+        Dictionary of arrays, keyed by
+            y1y1: y1 lenses, y1 sources
+            y1y3: y1 lenses, y3 sources
+        The data for each key is
+            'gammat': The gamma_t data vector for all l/s bins
+            'nzl': redshift and n(z) for the lenses for all l/s bins
+            'nzs': redshift and n(z) for the sources for all l/s bins
+    lbin: int
+        lens bin, 1 offset
+    sbin: int
+        source bin, 1 offst
+
+    Returns
+    -------
+    dict keyed by y1y1 or y1y3 with the particular data from the
+    requested lens/source bins.  Each key has entries
+        'lzbin': lens z grid
+        'lnofz': n(zl) on the grid
+        'szbin': source z grid
+        'snofz': n(zs) on z grid
+    """
+
+    if sample:
+        i1 = np.random.randint(1000)
+        y1area_nzs = data['y1area']['nzs_samples'][i1]
+        # y3area_nzs = y1area_nzs
+        i3 = np.random.randint(1000)
+        y3area_nzs = data['y3area']['nzs_samples'][i3]
+    else:
+        y1area_nzs = data['y1area']['nzs']
+        y3area_nzs = data['y3area']['nzs']
+
+    lbin_name = 'bin%d' % lbin
+    sbin_name = 'bin%d' % sbin
+
+    zdata = {
+        'y1area': {
+            'lzbin': data['y1area']['nzl']['z_mid'],
+            'lnofz': data['y1area']['nzl'][lbin_name],
+            'szbin': y1area_nzs['z_mid'],
+            'snofz': y1area_nzs[sbin_name],
+        },
+        'y3area': {
+            'lzbin': data['y3area']['nzl']['z_mid'],
+            'lnofz': data['y3area']['nzl'][lbin_name],
+            'szbin': y3area_nzs['z_mid'],
+            'snofz': y3area_nzs[sbin_name],
+        }
+    }
+    return zdata
+
+
+def plot_bin(*, plt, data, lbin, sbin, args, dolabel=False):
+    """
+
+    Calculate the fractional difference Y1/Y3-1 as a function of radius and
+    plot.   The m and y1 n(z) are sampled..  The input is expected to have a
+    random realization of Y3 source n(z).
+
+
+    Parameters
+    ----------
+    plt: the plot object
+        Curves will be added to the object
+    data: the data dict
+        See read_data() for the contents
+    lbin/sbin: int
+        lens and source bin indexes, 1 offset
+    args: parsed args
+        See get_args()
+    dolabel: bool
+        If True, add a label
+
+    Returns
+    -------
+    frac:  float
+        The overall mean fractional difference
+    """
+    zdata = get_nofz(data=data, lbin=lbin, sbin=sbin, sample=args.sample)
+
+    siginv_y1area = inv_sigma_crit_eff_fast(
+        zlbin=zdata['y1area']['lzbin'],
+        nzl=zdata['y1area']['lnofz'],
+        zsbin=zdata['y1area']['szbin'],
+        nzs=zdata['y1area']['snofz'],
+    )
+    siginv_y3area = inv_sigma_crit_eff_fast(
+        zlbin=zdata['y3area']['lzbin'],
+        nzl=zdata['y3area']['lnofz'],
+        zsbin=zdata['y3area']['szbin'],
+        nzs=zdata['y3area']['snofz'],
+    )
+
+    print('siginv_y1area:', siginv_y1area)
+    print('siginv_y3area:', siginv_y3area)
+
+    wy1area, = np.where(
+        (data['y1area']['gammat']['bin1'] == lbin) &
+        (data['y1area']['gammat']['bin2'] == sbin)
+    )
+    wy3area, = np.where(
+        (data['y3area']['gammat']['bin1'] == lbin) &
+        (data['y3area']['gammat']['bin2'] == sbin)
+    )
+
+    gt_y1area = data['y1area']['gammat']['value'][wy1area]
+    gt_y3area = data['y3area']['gammat']['value'][wy3area]
+
+    imin, imax = wy1area[0], wy1area[-1]+1
+    gterr_y1area = np.sqrt(
+        # np.diag(data['y1area']['gammat_cov'][wy1area, wy1area])
+        np.diag(data['y1area']['gammat_cov'][imin:imax, imin:imax])
+    )
+    gterr_y3area = np.sqrt(
+        # np.diag(data['y3area']['gammat_cov'][wy3area, wy3area])
+        np.diag(data['y3area']['gammat_cov'][imin:imax, imin:imax])
+    )
+    # print('orig shape:', data['y1area']['gammat_cov'][imin:imax, imin:imax].shape)
+    # print('err shape:', gterr_y1area.shape)
+    # stop
+    # print('err:', gterr_y1area)
+
+    if args.sample:
+        y3area_oneplusm = (
+            1 + Y3_MVALS[sbin-1][0] + np.random.normal(scale=Y3_MVALS[sbin-1][1])
+        )
+        y1area_oneplusm = (
+            1 + Y3_MVALS[sbin-1][0] + np.random.normal(scale=Y3_MVALS[sbin-1][1])
+        )
+    else:
+        y3area_oneplusm = 1 + Y3_MVALS[sbin-1][0]
+        y1area_oneplusm  = y3area_oneplusm
+
+    gt_y1area /= y1area_oneplusm
+    gt_y3area /= y3area_oneplusm
+    gterr_y1area /= y1area_oneplusm
+    gterr_y3area /= y3area_oneplusm
+
+    ds_y1area = gt_y1area/siginv_y1area
+    ds_y3area = gt_y3area/siginv_y3area
+
+    dserr_y1area = gterr_y1area/siginv_y1area
+    dserr_y3area = gterr_y3area/siginv_y3area
+
+    # rad_y1area = np.deg2rad(data['y1area']['gammat']['ang'][wy1area]/60)  # noqa
+    # r_y1area = rad_y1area*Y3_CHI_FACTORS[lbin-1]
+
+    rad_y3area = np.deg2rad(data['y3area']['gammat']['ang'][wy3area]/60)
+    r_y3area = rad_y3area*Y3_CHI_FACTORS[lbin-1]
+
+    frac = ds_y1area/ds_y3area - 1
+
+    print('#'*70)
+    print(sbin, lbin)
+
+    if args.sample:
+        alpha = 0.01
+    else:
+        alpha = 0.7
+
+    ls = 'solid'
+    plt.axhline(0, color='gray')
+
+    if args.plot_dsig:
+        if args.sample:
+            plt.curve(
+                r_y3area, ds_y1area*r_y3area,
+                color='blue', linestyle=ls, alpha=alpha,
+            )
+            plt.curve(
+                r_y3area, ds_y3area*r_y3area,
+                color='red', linestyle=ls, alpha=alpha,
+            )
+        if dolabel or not args.sample:
+            # plt.curve(
+            #     r_y3area - 1.e9, ds_y1area*r_y3area,
+            #     color='blue', linestyle=ls, label='Y1 area',
+            # )
+            # plt.curve(
+            #     r_y3area - 1.e9, ds_y3area*r_y3area,
+            #     color='red', linestyle=ls, label='Y3 area',
+            # )
+            plt.errorbar(
+                r_y3area, ds_y1area*r_y3area, dserr_y1area*r_y3area,
+                color='blue', label='Y1 area', markersize=4, alpha=alpha,
+            )
+            plt.errorbar(
+                r_y3area, ds_y3area*r_y3area, dserr_y3area*r_y3area,
+                color='red', label='Y3 area', markersize=4, alpha=alpha,
+            )
+
+            plt.legend()
+
+    else:
+        plt.curve(r_y3area, frac, color='blue', linestyle=ls, alpha=alpha)
+
+    wlo, = np.where(r_y3area < 10)
+    whi, = np.where(r_y3area > 10)
+    frac_lo = frac[wlo]
+    frac_hi = frac[whi]
+
+    return {
+        'all': frac,
+        'lo': frac_lo,
+        'hi': frac_hi,
+    }
+
+
+def get_key(*, sbin, lbin, type='all'):
+    key = 'S%d-L%d' % (sbin, lbin)
+    if type == 'hi':
+        key += '-hi'
+    elif type == 'lo':
+        key += '-lo'
+
+    return key
+
+
+def get_mean(*, dlists, type='all'):
+    means = []
+    errs = []
+    for sbin in SBINS:
+        for lbin in LBINS:
+            key = get_key(sbin=sbin, lbin=lbin, type=type)
+
+            arr = eu.numpy_util.combine_arrlist(dlists[key])
+            mean = arr.mean()
+            err = arr.std()/np.sqrt(arr.size)
+
+            means.append(mean)
+            errs.append(err)
+
+    means = np.array(means)
+    errs = np.array(errs)
+
+    meanfrac, meanfrac_err = eu.stat.wmom(means, 1.0/errs**2, calcerr=True)
+    return meanfrac, meanfrac_err
+
+
+def main():
+    """
+    calculate the fractional difference over all radii for realizations
+    of the N(z)
+    """
+    args = get_args()
+    if args.sample:
+        ntrial = args.ntrial
+    else:
+        ntrial = 1
+
+    xlabel = r'$R [\mathrm{Mpc}]$'
+    xlim = 0.4, 200
+
+    if args.plot_dsig:
+        ylabel = r'$r \times \Delta\Sigma$'
+        ylim = (0, 60)
+    else:
+        ylabel = r'$\Delta\Sigma^{\mathrm{Y1area}}/\Delta\Sigma^{\mathrm{Y3area}} - 1$'  # noqa
+        ylim = (-1, 3)
+
+    dlists = {}
+    for sbin in SBINS:
+        for lbin in LBINS:
+            for type in TYPES:
+                key = get_key(sbin=sbin, lbin=lbin, type=type)
+                dlists[key] = []
+
+    data = read_data()
+    for sbin in SBINS:
+
+        tab = hickory.Table(
+            figsize=(8, 6),
+            nrows=2, ncols=2,
+        )
+        tab.suptitle('Y3 lenses, different areas')
+        tab[0, 0].set(
+            xlim=xlim,
+            ylim=ylim,
+            ylabel=ylabel,
+        )
+        tab[0, 1].set(
+            xlim=xlim,
+            ylim=ylim,
+        )
+
+        tab[1, 0].set(
+            xlim=xlim,
+            ylim=ylim,
+            xlabel=xlabel,
+            ylabel=ylabel,
+        )
+        tab[1, 1].set(
+            xlim=xlim,
+            ylim=ylim,
+            xlabel=xlabel,
+        )
+
+        for plt in tab.axes:
+            plt.set_xscale('log')
+
+        tab[0, 0].ntext(0.1, 0.9, 'sbin %d, lbin 1' % sbin)
+        tab[0, 1].ntext(0.1, 0.9, 'sbin %d, lbin 2' % sbin)
+        tab[1, 0].ntext(0.1, 0.9, 'sbin %d, lbin 3' % sbin)
+        tab[1, 1].ntext(0.1, 0.9, 'sbin %d, lbin 4' % sbin)
+
+        for trial in range(ntrial):
+
+            if trial == 0:
+                dolabel = True
+            else:
+                dolabel = False
+
+            for lbin in LBINS:
+                res = plot_bin(
+                    args=args,
+                    plt=tab.axes[lbin-1], lbin=lbin, sbin=sbin,
+                    data=data,
+                    dolabel=dolabel,
+                )
+                for type in TYPES:
+                    key = get_key(sbin=sbin, lbin=lbin, type=type)
+                    dlists[key] += [res[type]]
+
+            # res1 = plot_bin(
+            #     args=args,
+            #     plt=tab[0, 0], lbin=1, sbin=sbin,
+            #     data=data,
+            #     dolabel=dolabel,
+            # )
+            # res2 = plot_bin(
+            #     args=args,
+            #     plt=tab[0, 1], lbin=2, sbin=sbin,
+            #     data=data,
+            # )
+            # res3 = plot_bin(
+            #     args=args,
+            #     plt=tab[1, 0], lbin=3, sbin=sbin,
+            #     data=data,
+            # )
+            # res4 = plot_bin(
+            #     args=args,
+            #     plt=tab[1, 1], lbin=4, sbin=sbin,
+            #     data=data,
+            # )
+            # for lbin in LBINS:
+            #     for type in ['all', 'lo', 'hi']:
+            #         key = get_key(sbin=sbin, lbin=lbin, type=type)
+            #         dlists[key] += [res1[type]]
+
+            # dlists['S%d-L%d' % (sbin, 1)] += [res1[0]]
+            # dlists['S%d-L%d' % (sbin, 2)] += [res2[0]]
+            # dlists['S%d-L%d' % (sbin, 3)] += [res3[0]]
+            # dlists['S%d-L%d' % (sbin, 4)] += [res4[0]]
+
+        pltname = (
+            'fracdiff-y1-y3-sbin%d-y3lenses-'
+            'diffarea-sample.png' % sbin
+        )
+        if args.plot_dsig:
+            pltname = pltname.replace('.png', '-dsig.png')
+
+        print('writing:', pltname)
+        tab.savefig(pltname, dpi=150)
+
+    meanfrac, meanfrac_err = get_mean(dlists=dlists, type='all')
+    meanfrac_lo, meanfrac_err_lo = get_mean(dlists=dlists, type='lo')
+    meanfrac_hi, meanfrac_err_hi = get_mean(dlists=dlists, type='hi')
+
+    # means = []
+    # errs = []
+    # for sbin in SBINS:
+    #     for lbin in LBINS:
+    #         key = 'S%d-L%d' % (sbin, lbin)
+    #
+    #         arr = eu.numpy_util.combine_arrlist(dlists[key])
+    #         mean = arr.mean()
+    #         err = arr.std()/np.sqrt(arr.size)
+    #
+    #         means.append(mean)
+    #         errs.append(err)
+    #
+    # means = np.array(means)
+    # errs = np.array(errs)
+    #
+    # meanfrac, meanfrac_err = eu.stat.wmom(means, 1.0/errs**2, calcerr=True)
+
+    print('overall mean: %g +/- %g' % (meanfrac, meanfrac_err))
+    print('lo mean: %g +/- %g' % (meanfrac_lo, meanfrac_err_lo))
+    print('hi mean: %g +/- %g' % (meanfrac_hi, meanfrac_err_hi))
+
+
+if __name__ == '__main__':
+    main()

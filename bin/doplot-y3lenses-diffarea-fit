@@ -1,0 +1,180 @@
+#!/usr/bin/env python
+
+import fitsio
+import numpy as np
+import esutil as eu
+
+y3lenses_y3sources_y3area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_x40randoms/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
+y3lenses_y3sources_y1area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT_y1footprint/zslim_som/zs_som/redmagic_x40randoms_year1footprint/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
+
+
+def get_args():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test-noise-bias', action='store_true')
+    parser.add_argument('--ntrial', type=int, default=100)
+    return parser.parse_args()
+
+
+def read_data():
+    data = {
+        'y1area': {
+            'gammat': fitsio.read(y3lenses_y3sources_y1area, ext='gammat', lower=True),  # noqa
+            'gammat_cov': fitsio.read(y3lenses_y3sources_y1area, ext='covmat'),  # noqa
+        },
+        'y3area': {
+            'gammat':  fitsio.read(y3lenses_y3sources_y3area, ext='gammat', lower=True),  # noqa
+            'gammat_cov':  fitsio.read(y3lenses_y3sources_y3area, ext='covmat'),  # noqa
+        }
+    }
+
+    return data
+
+
+def _do_fit(*, d, t, covinv):
+    """
+    d = A * t
+    A = t C^{-1} d/ [t C^{-1} t]
+    """
+    amp = np.dot(t, np.dot(covinv, d)) / (np.dot(t, np.dot(covinv, t)))
+    amp_err = 1/np.sqrt(np.dot(t, np.dot(covinv, t)))
+
+    return amp, amp_err
+
+
+def get_cov_inv(*, data):
+    covdiff = data['y1area']['gammat_cov'] - data['y3area']['gammat_cov']
+    covinv = np.linalg.inv(covdiff)
+    return covinv
+
+
+def extract_sub(*, data, type):
+    covinv = data['covinv']
+    gt_y1area = data['y1area']['gammat']['value']
+    gt_y3area = data['y3area']['gammat']['value']
+
+    # get bin example, radii all the same
+    wbin0, = np.where(
+        (data['y1area']['gammat']['bin1'] == 1) &
+        (data['y1area']['gammat']['bin2'] == 1)
+    )
+
+    ang0 = data['y1area']['gammat']['ang'][wbin0]
+
+    if type == 'lo':
+        wr, = np.where(ang0 < 50)
+    elif type == 'hi':
+        wr, = np.where(ang0 > 50)
+
+    points_per = wr.size
+    totpoints = points_per*5*4
+
+    gt_y1area_sub = np.zeros(totpoints)
+    gt_y3area_sub = np.zeros(totpoints)
+    covinv_sub = np.zeros((totpoints, totpoints))
+
+    start = 0
+    for sbin in [1, 2, 3, 4]:
+        for lbin in [1, 2, 3, 4, 5]:
+
+            w, = np.where(
+                (data['y1area']['gammat']['bin1'] == lbin) &
+                (data['y1area']['gammat']['bin2'] == sbin)
+            )
+
+            imin, imax = w[wr][0], w[wr][-1]+1
+
+            end = start + wr.size
+
+            gt_y1area_sub[start:end] = gt_y1area[imin:imax]
+            gt_y3area_sub[start:end] = gt_y3area[imin:imax]
+            covinv_sub[start:end, start:end] = covinv[imin:imax, imin:imax]
+
+            ang = data['y1area']['gammat']['ang'][imin:imax]
+            start += wr.size
+
+    return gt_y1area_sub, gt_y3area_sub, covinv_sub
+
+
+def do_fit(*, data, type):
+
+    if type != 'all':
+        gt_y1area, gt_y3area, covinv = extract_sub(data=data, type=type)
+    else:
+        covinv = data['covinv']
+        gt_y1area = data['y1area']['gammat']['value']
+        gt_y3area = data['y3area']['gammat']['value']
+
+    amp, amp_err = _do_fit(
+        d=gt_y1area,
+        t=gt_y3area,
+        covinv=covinv,
+    )
+    return amp, amp_err
+
+
+def test_noise_bias(*, data, ntrial):
+
+    covdiff = data['y1area']['gammat_cov'] - data['y3area']['gammat_cov']
+
+    amps = np.zeros(ntrial)
+    amp_errs = np.zeros(ntrial)
+    amps_lo = np.zeros(ntrial)
+    amp_lo_errs = np.zeros(ntrial)
+    amps_hi = np.zeros(ntrial)
+    amp_hi_errs = np.zeros(ntrial)
+
+    for i in range(ntrial):
+        # y1 = y3 + noise
+        noise = eu.random.cholesky_sample(covdiff, 1)
+        noise = noise[0, :]
+
+        data['y1area']['gammat']['value'] = (
+            data['y3area']['gammat']['value'] + noise
+        )
+        amps[i], amp_errs[i] = do_fit(data=data, type='all')
+        amps_lo[i], amp_lo_errs[i] = do_fit(data=data, type='lo')
+        amps_hi[i], amp_hi_errs[i] = do_fit(data=data, type='hi')
+
+    mean_amp = amps.mean()
+    std_amp = amps.std()
+    mean_amp_lo = amps_lo.mean()
+    std_amp_lo = amps_lo.std()
+    mean_amp_hi = amps_hi.mean()
+    std_amp_hi = amps_hi.std()
+
+    print('mean amp: %g +/- %g' % (mean_amp, std_amp))
+    print('predicted error: %g' % amp_errs.mean())
+
+    print('mean amp lo: %g +/- %g' % (mean_amp_lo, std_amp_lo))
+    # print('predicted error lo: %g' % amp_lo_errs.mean())
+    print('mean amp hi: %g +/- %g' % (mean_amp_hi, std_amp_hi))
+    # print('predicted error hi: %g' % amp_hi_errs.mean())
+
+
+def main():
+    """
+    calculate the fractional difference over all radii for realizations
+    of the N(z)
+    """
+
+    args = get_args()
+
+    data = read_data()
+    data['covinv'] = get_cov_inv(data=data)
+
+    if args.test_noise_bias:
+        test_noise_bias(data=data, ntrial=args.ntrial)
+        return
+
+    amp, amp_err = do_fit(data=data, type='all')
+    amp_lo, amp_err_lo = do_fit(data=data, type='lo')
+    amp_hi, amp_err_hi = do_fit(data=data, type='hi')
+
+    print('amp: %g +/- %g' % (amp, amp_err))
+    print('amp_lo: %g +/- %g' % (amp_lo, amp_err_lo))
+    print('amp_hi: %g +/- %g' % (amp_hi, amp_err_hi))
+
+
+if __name__ == '__main__':
+    main()
