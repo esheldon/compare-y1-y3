@@ -1,3 +1,7 @@
+import numpy as np
+import esutil as eu
+
+
 Y3_MVALS = [
     (-0.006, 0.008),
     (-0.010, 0.013),
@@ -43,6 +47,7 @@ def interpolate_y1_onto_y3(r3, r1, ds1):
     )
 
     if False:
+        import hickory
         plt = hickory.Plot()
         plt.plot(r1, ds1, label='y1 binning')
         plt.plot(r3, ds1_interp, label='interp')
