@@ -36,8 +36,10 @@ def _do_fit(*, d, t, covinv):
     d = A * t
     A = t C^{-1} d/ [t C^{-1} t]
     """
-    amp = np.dot(t, np.dot(covinv, d)) / (np.dot(t, np.dot(covinv, t)))
-    amp_err = 1/np.sqrt(np.dot(t, np.dot(covinv, t)))
+
+    einv = 1/np.dot(t, np.dot(covinv, t))
+    amp = np.dot(t, np.dot(covinv, d)) * einv
+    amp_err = np.sqrt(einv)
 
     return amp, amp_err
 
