@@ -44,7 +44,7 @@ def _do_fit(*, d, t, covinv):
     return amp, amp_err
 
 
-def get_cov_inv(*, data):
+def get_covdiff_inv(*, data):
     covdiff = data['y1area']['gammat_cov'] - data['y3area']['gammat_cov']
     covinv = np.linalg.inv(covdiff)
     return covinv
@@ -163,7 +163,7 @@ def main():
     args = get_args()
 
     data = read_data()
-    data['covinv'] = get_cov_inv(data=data)
+    data['covinv'] = get_covdiff_inv(data=data)
 
     if args.test_noise_bias:
         test_noise_bias(data=data, ntrial=args.ntrial)
