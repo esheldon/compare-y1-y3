@@ -92,3 +92,9 @@ def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs):
     F = np.trapz(Integ, zsbin)
 
     return F
+
+
+def get_covdiff_inv(*, data):
+    covdiff = data['y1area']['gammat_cov'] - data['y3area']['gammat_cov']
+    covinv = np.linalg.inv(covdiff)
+    return covinv

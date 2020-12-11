@@ -3,6 +3,7 @@
 import fitsio
 import numpy as np
 import esutil as eu
+from compare_y1_y3.util import get_covdiff_inv
 
 y3lenses_y3sources_y3area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_x40randoms/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
 y3lenses_y3sources_y1area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT_y1footprint/zslim_som/zs_som/redmagic_x40randoms_year1footprint/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
@@ -43,11 +44,6 @@ def _do_fit(*, d, t, covinv):
 
     return amp, amp_err
 
-
-def get_covdiff_inv(*, data):
-    covdiff = data['y1area']['gammat_cov'] - data['y3area']['gammat_cov']
-    covinv = np.linalg.inv(covdiff)
-    return covinv
 
 
 def extract_sub(*, data, type):
