@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 
+# from numba import njit
 import fitsio
 import numpy as np
+import hickory
 from compare_y1_y3.util import (
     Y3_MVALS,
     Y1_MVAL,
@@ -72,16 +74,149 @@ def read_data():
             'nzs': fitsio.read(y1lenses_y1sources, ext='nz_source', lower=True),  # noqa
         },
         'y1y3': {
-            # 'gammat':  fitsio.read(y1lenses_y3sources_noboost, ext='gammat', lower=True),  # noqa
             'gammat':  fitsio.read(y1lenses_y3sources_noboost_y1area, ext='gammat', lower=True),  # noqa
             'gammat_cov':  fitsio.read(y1lenses_y3sources_noboost_y1area, ext='covmat', lower=True),  # noqa
+            # 'gammat':  fitsio.read(y3sources, ext='gammat', lower=True),  # noqa
+            # 'gammat_cov':  fitsio.read(y3sources, ext='covmat', lower=True)[400:, 400:],  # noqa
+            # 'nzl': fitsio.read(y1lenses_y3sources_noboost_y1area, ext='nz_lens', lower=True),  # noqa
             'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
             'nzs_samples': nzs_samples,
             'nzs': nzs,
         }
     }
 
+    if False:
+        plt = hickory.Plot(figsize=(8, 8))
+        plt.imshow(data['y1y3']['gammat_cov'])
+        plt.show(dpi=300)
+
     return data
+
+
+def plot_bin(*, data, sbin, plot_ratio=False, plt=None):
+    """
+
+    Calculate the fractional difference Y1/Y3-1 as a function of radius and
+    plot.   The m and y1 n(z) are sampled..  The input is expected to have a
+    random realization of Y3 source n(z).
+
+
+    Parameters
+    ----------
+    plt: the plot object
+        Curves will be added to the object
+    data: the data dict
+        See read_data() for the contents
+    lbin/sbin: int
+        lens and source bin indexes, 1 offset
+    args: parsed args
+        See get_args()
+    dolabel: bool
+        If True, add a label
+
+    Returns
+    -------
+    frac:  float
+        The overall mean fractional difference
+    """
+    xlabel = r'$R [\mathrm{Mpc}]$'
+    xlim = 0.4, 200
+
+    if plot_ratio:
+        ylabel = r'$\Delta\Sigma^{\mathrm{Y1}}/\Delta\Sigma^{\mathrm{Y3}} - 1$'  # noqa
+        ylim = (-1, 3)
+    else:
+        ylabel = r'$r \times \Delta\Sigma$'
+        ylim = (0, 60)
+
+    lbins = list(range(1, 4+1))
+
+    tab = hickory.Table(
+        figsize=(8, 6),
+        nrows=2, ncols=2,
+    )
+    tab.suptitle('Y1 lenses, different sources')
+    tab[0, 0].set(
+        xlim=xlim,
+        ylim=ylim,
+        ylabel=ylabel,
+    )
+    tab[0, 1].set(
+        xlim=xlim,
+        ylim=ylim,
+    )
+
+    tab[1, 0].set(
+        xlim=xlim,
+        ylim=ylim,
+        xlabel=xlabel,
+        ylabel=ylabel,
+    )
+    tab[1, 1].set(
+        xlim=xlim,
+        ylim=ylim,
+        xlabel=xlabel,
+    )
+
+    for plt in tab.axes:
+        plt.set_xscale('log')
+
+    tab[0, 0].ntext(0.1, 0.9, 'sbin %d, lbin 1' % sbin)
+    tab[0, 1].ntext(0.1, 0.9, 'sbin %d, lbin 2' % sbin)
+    tab[1, 0].ntext(0.1, 0.9, 'sbin %d, lbin 3' % sbin)
+    tab[1, 1].ntext(0.1, 0.9, 'sbin %d, lbin 4' % sbin)
+
+    for i, lbin in enumerate(lbins):
+        plt = tab.axes[i]
+
+        wy1y1, = np.where(
+            (data['y1y1']['gammat']['bin1'] == lbin) &
+            (data['y1y1']['gammat']['bin2'] == sbin)
+        )
+        wy1y3, = np.where(
+            (data['y1y3']['gammat']['bin1'] == lbin) &
+            (data['y1y3']['gammat']['bin2'] == sbin)
+        )
+
+        if plot_ratio:
+            frac = data['y1y1']['ds'][wy1y1]/data['y1y3']['ds'][wy1y3]
+            plt.curve(data['y1y1']['r'], frac, color='blue', linestyle='-')
+        else:
+
+            imin, imax = wy1y1[0], wy1y1[-1]+1
+            dserr1 = np.sqrt(
+                np.diag(
+                    data['y1y1']['dscov'][imin:imax, imin:imax]
+                )
+            )
+            imin, imax = wy1y3[0], wy1y3[-1]+1
+            dserr3 = np.sqrt(
+                np.diag(
+                    data['y1y3']['dscov'][imin:imax, imin:imax]
+                )
+            )
+
+            r1 = data['y1y1']['r'][wy1y1]
+            r3 = data['y1y3']['r'][wy1y3]
+            pow = 0.8
+
+            plt.errorbar(
+                r1,
+                r1**pow * data['y1y1']['ds'][wy1y1],
+                r1**pow * dserr1,
+                color='blue', label='Y1 sources', markersize=4,
+            )
+            plt.errorbar(
+                r3,
+                r3**pow * data['y1y3']['ds'][wy1y3],
+                r3**pow * dserr3,
+                color='red', label='Y3 sources', markersize=4,
+            )
+
+            if lbin == 1:
+                plt.legend()
+
+    return tab
 
 
 def get_nofz(*, data, lbin, sbin, sample=False):
@@ -125,19 +260,21 @@ def get_nofz(*, data, lbin, sbin, sample=False):
     lbin_name = 'bin%d' % lbin
     sbin_name = 'bin%d' % sbin
 
-    y1_zs = data['y1y1']['nzs']['z_mid']
-    y1_nofzs = data['y1y1']['nzs'][sbin_name]
-
-    z1off = Y1_ZS_OFFSETS[sbin-1][0]
+    moff = Y1_ZS_OFFSETS[sbin-1][0]
+    woff = Y1_ZS_OFFSETS[sbin-1][1]
     if sample:
-        woff = Y1_ZS_OFFSETS[sbin-1][1]
-        z1off = z1off + np.random.normal(scale=woff)
+        z1off = np.random.normal(
+            loc=moff,
+            scale=woff,
+        )
+    else:
+        z1off = moff
 
-    y1_zs = y1_zs + z1off
+    y1_zs = data['y1y1']['nzs']['z_mid'] + z1off
 
     w, = np.where(y1_zs > 0)
     y1_zs = y1_zs[w]
-    y1_nofzs = y1_nofzs[w]
+    y1_nofzs = data['y1y1']['nzs'][sbin_name][w]
 
     zdata = {
         'y1y1': {
@@ -272,44 +409,53 @@ def extract_sub(*, data, type):
     return gt_y1area_sub, gt_y3area_sub, covinv_sub
 
 
-def get_oneplusm(*, sbin, sample=False):
+def get_oneplusm(*, sbin, sample=False, notsame=False):
     """
     """
     y3_oneplusm = 1 + Y3_MVALS[sbin-1][0]
-    y1_oneplusm = y3_oneplusm
 
-    # y1_oneplusm = (1 + Y1_MVAL)
-    if sample:
-        y1_oneplusm += np.random.normal(scale=Y3_MVALS[sbin-1][1])
+    if notsame:
+        y1_oneplusm = 1 + Y1_MVAL
+    else:
+        y1_oneplusm = y3_oneplusm
+
+        if sample:
+            y1_oneplusm += np.random.normal(scale=Y3_MVALS[sbin-1][1])
 
     return y1_oneplusm, y3_oneplusm
 
 
-def rescale_data(*, data, sample=False):
+# @njit
+# def rescale_cov(cov, facs):
+#
+#     start = 0
+#     for lbin in range(5):
+#         for sbin in range(4):
+#             fac = facs[lbin, sbin]
+#             end = start + 20
+#             start += 20
+
+def add_rescaled_data(*, data, sample=False):
 
     npts = data['y1y3']['gammat']['value'].size  # - 4*20
-    out_data = {
-        'y1y1': {
-            'ds': np.zeros(npts),  # + np.nan,
-            'dscov': np.zeros((npts, npts)),  # + np.nan,
-            # 'ds': data['y1y1']['gammat']['value'],
-            # 'dscov': data['y1y1']['gammat_cov'],
-        },
-        'y1y3': {
-            'ds': np.zeros(npts),  # + np.nan,
-            'dscov': np.zeros((npts, npts)),  # + np.nan,
-            # 'ds': data['y1y3']['gammat']['value'],
-            # 'dscov': data['y1y3']['gammat_cov'],
-        }
+    data['y1y1']['r'] = np.zeros(npts)
+    data['y1y1']['ds'] = np.zeros(npts)
+    data['y1y1']['dscov'] = np.zeros((npts, npts))
+    # data['y1y1']['dscov'] = data['y1y1']['gammat_cov'].copy()
+    data['y1y1']['theory'] = np.zeros(npts)
 
-    }
-    # return out_data
-    # print('npts:', npts)
-    # print(data['y1y3']['gammat_cov'].shape)
+    data['y1y3']['r'] = np.zeros(npts)
+    data['y1y3']['ds'] = np.zeros(npts)
+    data['y1y3']['dscov'] = np.zeros((npts, npts))
 
-    for sbin in range(1, 4+1):
-        for lbin in range(1, 5+1):
-        # for lbin in range(1, 4+1):
+    data['y1y3']['theory'] = np.zeros(npts)
+    # data['y1y3']['dscov'] = data['y1y3']['gammat_cov'].copy()
+
+    facs_y1y1 = np.zeros((5, 4))
+    facs_y1y3 = np.zeros((5, 4))
+
+    for lbin in range(1, 5+1):
+        for sbin in range(1, 4+1):
 
             zdata = get_nofz(data=data, lbin=lbin, sbin=sbin, sample=sample)
 
@@ -318,6 +464,8 @@ def rescale_data(*, data, sample=False):
                 nzl=zdata['y1y1']['lnofz'],
                 zsbin=zdata['y1y1']['szbin'],
                 nzs=zdata['y1y1']['snofz'],
+                # zsbin=zdata['y1y3']['szbin'],
+                # nzs=zdata['y1y3']['snofz'],
             )
             siginv_y1y3 = inv_sigma_crit_eff_fast(
                 zlbin=zdata['y1y3']['lzbin'],
@@ -329,7 +477,9 @@ def rescale_data(*, data, sample=False):
             print('siginv_y1y1:', siginv_y1y1)
             print('siginv_y1y3:', siginv_y1y3)
 
-            y1_oneplusm, y3_oneplusm = get_oneplusm(sbin=sbin, sample=sample)
+            y1_oneplusm, y3_oneplusm = get_oneplusm(
+                sbin=sbin, sample=sample, notsame=False,
+            )
 
             wy1y1, = np.where(
                 (data['y1y1']['gammat']['bin1'] == lbin) &
@@ -342,11 +492,24 @@ def rescale_data(*, data, sample=False):
 
             fac_y1y1 = 1.0/y1_oneplusm/siginv_y1y1
             fac_y1y3 = 1.0/y3_oneplusm/siginv_y1y3
+            facs_y1y1[lbin-1, sbin-1] = fac_y1y1
+            facs_y1y3[lbin-1, sbin-1] = fac_y1y3
 
             ds_y1y1 = data['y1y1']['gammat']['value'][wy1y1] * fac_y1y1
             ds_y1y3 = data['y1y3']['gammat']['value'][wy1y3] * fac_y1y3
 
+            rad_y1y1 = np.deg2rad(data['y1y1']['gammat']['ang'][wy1y1]/60)
+            r_y1y1 = rad_y1y1*Y1_CHI_FACTORS[lbin-1]
+            rad_y1y3 = np.deg2rad(data['y1y3']['gammat']['ang'][wy1y3]/60)
+            r_y1y3 = rad_y1y3*Y1_CHI_FACTORS[lbin-1]
+
+            data['y1y1']['r'][wy1y1] = r_y1y1
+            data['y1y3']['r'][wy1y3] = r_y1y3
+
+            ds_y1y1_interp = interpolate_y1_onto_y3(r_y1y3, r_y1y1, ds_y1y1)
+
             imin, imax = wy1y1[0], wy1y1[-1]+1
+            print('sbin, lbin:', imin, imax)
             cov_y1y1 = (
                 data['y1y1']['gammat_cov'][imin:imax, imin:imax] * fac_y1y1**2
             )
@@ -356,15 +519,23 @@ def rescale_data(*, data, sample=False):
             )
             # print('imin, imax:', imin, imax)
 
-            # out_data['y1y1']['ds'][imin:imax] = ds_y1y1
-            out_data['y1y1']['ds'][wy1y1] = ds_y1y1
-            out_data['y1y1']['dscov'][imin:imax, imin:imax] = cov_y1y1
+            # ds*r**pow == constant
+            # same as fitting ds to 1/r**pow
+            pow = 0.8
+            data['y1y1']['theory'][wy1y1] = 1.0/r_y1y1**pow
+            data['y1y3']['theory'][wy1y3] = 1.0/r_y1y3**pow
 
-            # out_data['y1y3']['ds'][imin:imax] = ds_y1y3
-            out_data['y1y3']['ds'][wy1y3] = ds_y1y3
-            out_data['y1y3']['dscov'][imin:imax, imin:imax] = cov_y1y3
+            # data['y1y1']['ds'][wy1y1] = ds_y1y1
+            data['y1y1']['ds'][wy1y1] = ds_y1y1_interp
+            data['y1y1']['dscov'][imin:imax, imin:imax] = cov_y1y1
 
-    return out_data
+            data['y1y3']['ds'][wy1y3] = ds_y1y3
+            data['y1y3']['dscov'][imin:imax, imin:imax] = cov_y1y3
+
+
+def do_one(*, data, sample):
+    add_rescaled_data(data=data, sample=sample)
+    return do_fit(data=data, type='all')
 
 
 def do_fit(*, data, type):
@@ -376,7 +547,9 @@ def do_fit(*, data, type):
         # print('dscov')
         # print(data['y1y3']['dscov'][0:30, 0:30])
 
+        # covinv = np.linalg.inv(data['y1y1']['dscov'] - data['y1y3']['dscov'])
         covinv = np.linalg.inv(data['y1y3']['dscov'])
+        # covinv = np.linalg.inv(data['y1y1']['dscov'])
         # print('covinv')
         # print(covinv)
         dsy1y1 = data['y1y1']['ds']
@@ -385,14 +558,11 @@ def do_fit(*, data, type):
     amp, amp_err = fit_amp(
         d=dsy1y1,
         t=dsy1y3,
+        # t=dsy1y1,
+        # d=dsy1y3,
         covinv=covinv,
     )
     return amp, amp_err
-
-
-def do_one(*, data, sample):
-    rescaled_data = rescale_data(data=data, sample=sample)
-    return do_fit(data=rescaled_data, type='all')
 
 
 def main():
@@ -404,8 +574,8 @@ def main():
         amp_errs = np.zeros(args.ntrial)
 
         for i in range(args.ntrial):
-            rescaled_data = rescale_data(data=data, sample=args.sample)
-            amp, amp_err = do_fit(data=rescaled_data, type='all')
+            add_rescaled_data(data=data, sample=args.sample)
+            amp, amp_err = do_fit(data=data, type='all')
             amps[i] = amp
             amp_errs[i] = amp_err
         amp = amps.mean()
@@ -413,11 +583,80 @@ def main():
         amp_std = amps.std()
         print("amp std:", amp_std)
     else:
-        rescaled_data = rescale_data(data=data)
-        amp, amp_err = do_fit(data=rescaled_data, type='all')
+        add_rescaled_data(data=data)
+        # tab = plot_bin(data=data, sbin=4)
+        # tab.show(dpi=150)
+        amp, amp_err = do_fit(data=data, type='all')
+
+        # data['y1y3']['ds'] *= amp
+        # data['y1y3']['dscov'] *= amp**2
+        # tab = plot_bin(data=data, sbin=4)
+        # tab.show(dpi=150)
+
+    print('amp: %g +/- %g' % (amp, amp_err))
+
+
+def do_fit_pow(*, data, type):
+    if type != 'all':
+        gt_y1, gt_y3, covinv = extract_sub(data=data, type=type)
+    else:
+        # print('ds')
+        # print(data['y1y3']['ds'])
+        # print('dscov')
+        # print(data['y1y3']['dscov'][0:30, 0:30])
+
+        # covinv = np.linalg.inv(data['y1y1']['dscov'] - data['y1y3']['dscov'])
+        covinv_y1y1 = np.linalg.inv(data['y1y1']['dscov'])
+        covinv_y1y3 = np.linalg.inv(data['y1y3']['dscov'])
+        dsy1y1 = data['y1y1']['ds']
+        ty1y1 = data['y1y1']['theory']
+
+        dsy1y3 = data['y1y3']['ds']
+        ty1y3 = data['y1y3']['theory']
+
+    amp_y1y1, amp_err_y1y1 = fit_amp(
+        d=dsy1y1,
+        t=ty1y1,
+        covinv=covinv_y1y1,
+    )
+    amp_y1y3, amp_err_y1y3 = fit_amp(
+        d=dsy1y3,
+        t=ty1y3,
+        covinv=covinv_y1y3,
+    )
+
+    rat = amp_y1y1/amp_y1y3
+    rat_err = rat*np.sqrt(
+        (amp_err_y1y1/amp_y1y1)**2 +
+        (amp_err_y1y3/amp_y1y3)**2
+    )
+    return rat, rat_err
+
+
+def main_pow():
+    args = get_args()
+    data = read_data()
+
+    if args.sample:
+        amps = np.zeros(args.ntrial)
+        amp_errs = np.zeros(args.ntrial)
+
+        for i in range(args.ntrial):
+            add_rescaled_data(data=data, sample=args.sample)
+            amp, amp_err = do_fit_pow(data=data, type='all')
+            amps[i] = amp
+            amp_errs[i] = amp_err
+        amp = amps.mean()
+        amp_err = amp_errs.mean()
+        amp_std = amps.std()
+        print("amp std:", amp_std)
+    else:
+        add_rescaled_data(data=data)
+        amp, amp_err = do_fit_pow(data=data, type='all')
 
     print('amp: %g +/- %g' % (amp, amp_err))
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+    main_pow()
