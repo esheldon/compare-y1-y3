@@ -3,7 +3,10 @@
 import fitsio
 import numpy as np
 import esutil as eu
-from compare_y1_y3.util import get_covdiff_inv
+from compare_y1_y3.util import (
+    get_covdiff_inv,
+    fit_amp,
+)
 
 y3lenses_y3sources_y3area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_x40randoms/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
 y3lenses_y3sources_y1area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT_y1footprint/zslim_som/zs_som/redmagic_x40randoms_year1footprint/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
@@ -30,20 +33,6 @@ def read_data():
     }
 
     return data
-
-
-def _do_fit(*, d, t, covinv):
-    """
-    d = A * t
-    A = t C^{-1} d/ [t C^{-1} t]
-    """
-
-    einv = 1/np.dot(t, np.dot(covinv, t))
-    amp = np.dot(t, np.dot(covinv, d)) * einv
-    amp_err = np.sqrt(einv)
-
-    return amp, amp_err
-
 
 
 def extract_sub(*, data, type):
@@ -103,7 +92,7 @@ def do_fit(*, data, type):
         gt_y1area = data['y1area']['gammat']['value']
         gt_y3area = data['y3area']['gammat']['value']
 
-    amp, amp_err = _do_fit(
+    amp, amp_err = fit_amp(
         d=gt_y1area,
         t=gt_y3area,
         covinv=covinv,
@@ -159,7 +148,10 @@ def main():
     args = get_args()
 
     data = read_data()
-    data['covinv'] = get_covdiff_inv(data=data)
+    data['covinv'] = get_covdiff_inv(
+        cov1=data['y1area']['gammat_cov'],
+        cov2=data['y3area']['gammat_cov'],
+    )
 
     if args.test_noise_bias:
         test_noise_bias(data=data, ntrial=args.ntrial)

@@ -94,7 +94,24 @@ def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs):
     return F
 
 
-def get_covdiff_inv(*, data):
-    covdiff = data['y1area']['gammat_cov'] - data['y3area']['gammat_cov']
+def get_covdiff_inv(*, cov1, cov2):
+    covdiff = cov1 - cov2
     covinv = np.linalg.inv(covdiff)
     return covinv
+
+
+def fit_amp(*, d, t, covinv):
+    """
+    d = A * t
+    A = t C^{-1} d/ [t C^{-1} t]
+    """
+
+    einv = 1/np.dot(t, np.dot(covinv, t))
+    amp = np.dot(t, np.dot(covinv, d)) * einv
+    amp_err = np.sqrt(einv)
+
+    return amp, amp_err
+
+
+
+

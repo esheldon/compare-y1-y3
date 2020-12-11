@@ -15,6 +15,7 @@ from compare_y1_y3.util import (
 )
 
 SBINS = list(range(1, 4+1))
+# not using all
 LBINS = list(range(1, 4+1))
 TYPES = ['all', 'lo', 'hi']
 
@@ -132,6 +133,7 @@ def get_nofz(*, data, lbin, sbin):
     w, = np.where(y1_zs > 0)
     y1_zs = y1_zs[w]
     y1_nofzs = data['y3y1']['nzs'][sbin_name][w]
+    stop bug
 
     zdata = {
         'y3y1': {

@@ -11,9 +11,11 @@ from compare_y1_y3.util import (
     inv_sigma_crit_eff_fast,
 )
 
-SBINS = list(range(1, 4+1))
-LBINS = list(range(1, 4+1))
 TYPES = ['all', 'lo', 'hi']
+SBINS = list(range(1, 4+1))
+# not using all
+LBINS = list(range(1, 4+1))
+
 
 y1lenses_y1sources = '2pt_NG_mcal_1110.fits'
 
