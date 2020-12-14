@@ -63,11 +63,14 @@ def interpolate_y1_onto_y3(r3, r1, ds1):
     return ds1_interp
 
 
-def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs):
+def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs, cosmo_pars):
     """
     from Carles and Judit
     """
-    c = eu.cosmology.Cosmo(omega_m=0.3)
+    c = eu.cosmology.Cosmo(
+        omega_m=cosmo_pars['omega_m'],
+        h=cosmo_pars['h'],
+    )
 
     dzl = zlbin[1]-zlbin[0]
     dzs = zsbin[1]-zsbin[0]
@@ -92,6 +95,14 @@ def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs):
     F = np.trapz(Integ, zsbin)
 
     return F
+
+
+def get_mean_z(*, z, nz):
+    return eu.integrate.qgauss(
+        z,
+        z*nz,
+        1000,
+    )
 
 
 def get_covdiff_inv(*, cov1, cov2):
