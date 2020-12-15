@@ -2,21 +2,54 @@
 
 import fitsio
 import numpy as np
-import esutil as eu
+import hickory
+from compare_y1_y3.fitting import fit_nfw_lin
 from compare_y1_y3.util import (
-    get_covdiff_inv,
-    fit_amp,
+    Y3_CHI_FACTORS,
+    print_stats,
+    add_rescaled_data,
 )
+import dsfit
+
+
+y3sources = '2pt_NG_final_2ptunblind_11_13_20_wnz.fits'
 
 y3lenses_y3sources_y3area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT/zslim_som/zs_som/redmagic_x40randoms/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
 y3lenses_y3sources_y1area = '~/git/xcorr/runs/Y3_mastercat___UNBLIND___final_v1.0_DO_NOT_USE_FOR_2PT_y1footprint/zslim_som/zs_som/redmagic_x40randoms_year1footprint/zllim_y3/lens_w_True/njk_150/thbin_2.50_250_20/bslop_0/source_only_close_to_lens_True_nside4/measurement/gt_boosted_twopointfile.fits'  # noqa
+
+# (sbin, lbin),
+BINS2FIT = [
+    (1, 1),
+    (1, 2),
+    (1, 3),  # marginal
+    (1, 4),  # *
+    # (1, 5),  # *
+    #
+    (2, 1),
+    (2, 2),
+    (2, 3),
+    (2, 4),   # *
+    # (2, 5),   # *
+    #
+    (3, 1),
+    (3, 2),
+    (3, 3),
+    (3, 4),  # *
+    # (3, 5),  # *
+    #
+    (4, 1),
+    (4, 2),
+    (4, 3),
+    (4, 4),  # *
+    # (4, 5),  # *
+
+]
 
 
 def get_args():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--test-noise-bias', action='store_true')
-    parser.add_argument('--ntrial', type=int, default=100)
+    parser.add_argument('--seed', type=int, required=True)
     return parser.parse_args()
 
 
@@ -25,145 +58,157 @@ def read_data():
         'y1area': {
             'gammat': fitsio.read(y3lenses_y3sources_y1area, ext='gammat', lower=True),  # noqa
             'gammat_cov': fitsio.read(y3lenses_y3sources_y1area, ext='covmat'),  # noqa
+            # 'nzl': fitsio.read(y3lenses_y3sources_y1area, ext='nz_lens', lower=True),  # noqa
+            # 'nzs': fitsio.read(y3lenses_y3sources_y1area, ext='nz_source', lower=True),  # noqa
+            'nzl': fitsio.read(y3sources, ext='nz_lens', lower=True),  # noqa
+            'nzs': fitsio.read(y3sources, ext='nz_source', lower=True),  # noqa
+            'chi_factors': Y3_CHI_FACTORS,
         },
         'y3area': {
             'gammat':  fitsio.read(y3lenses_y3sources_y3area, ext='gammat', lower=True),  # noqa
             'gammat_cov':  fitsio.read(y3lenses_y3sources_y3area, ext='covmat'),  # noqa
+            # 'nzl': fitsio.read(y3lenses_y3sources_y3area, ext='nz_lens', lower=True),  # noqa
+            # 'nzs': fitsio.read(y3lenses_y3sources_y3area, ext='nz_source', lower=True),  # noqa
+            'nzl': fitsio.read(y3sources, ext='nz_lens', lower=True),  # noqa
+            'nzs': fitsio.read(y3sources, ext='nz_source', lower=True),  # noqa
+            'chi_factors': Y3_CHI_FACTORS,
         }
     }
 
     return data
 
 
-def extract_sub(*, data, type):
-    covinv = data['covinv']
-    gt_y1area = data['y1area']['gammat']['value']
-    gt_y3area = data['y3area']['gammat']['value']
+def do_fits(*, rng, data, cosmo_pars):
 
-    # get bin example, radii all the same
-    wbin0, = np.where(
-        (data['y1area']['gammat']['bin1'] == 1) &
-        (data['y1area']['gammat']['bin2'] == 1)
-    )
+    tab_y1area = make_table()
+    tab_y3area = make_table()
+    reslist = []
 
-    ang0 = data['y1area']['gammat']['ang'][wbin0]
-
-    if type == 'lo':
-        wr, = np.where(ang0 < 50)
-    elif type == 'hi':
-        wr, = np.where(ang0 > 50)
-
-    points_per = wr.size
-    totpoints = points_per*5*4
-
-    gt_y1area_sub = np.zeros(totpoints)
-    gt_y3area_sub = np.zeros(totpoints)
-    covinv_sub = np.zeros((totpoints, totpoints))
-
-    start = 0
-    for sbin in [1, 2, 3, 4]:
-        for lbin in [1, 2, 3, 4, 5]:
-
-            w, = np.where(
-                (data['y1area']['gammat']['bin1'] == lbin) &
-                (data['y1area']['gammat']['bin2'] == sbin)
-            )
-
-            imin, imax = w[wr][0], w[wr][-1]+1
-
-            end = start + wr.size
-
-            gt_y1area_sub[start:end] = gt_y1area[imin:imax]
-            gt_y3area_sub[start:end] = gt_y3area[imin:imax]
-            covinv_sub[start:end, start:end] = covinv[imin:imax, imin:imax]
-
-            ang = data['y1area']['gammat']['ang'][imin:imax]
-            start += wr.size
-
-    return gt_y1area_sub, gt_y3area_sub, covinv_sub
-
-
-def do_fit(*, data, type):
-
-    if type != 'all':
-        gt_y1area, gt_y3area, covinv = extract_sub(data=data, type=type)
-    else:
-        covinv = data['covinv']
-        gt_y1area = data['y1area']['gammat']['value']
-        gt_y3area = data['y3area']['gammat']['value']
-
-    amp, amp_err = fit_amp(
-        d=gt_y1area,
-        t=gt_y3area,
-        covinv=covinv,
-    )
-    return amp, amp_err
-
-
-def test_noise_bias(*, data, ntrial):
-
-    covdiff = data['y1area']['gammat_cov'] - data['y3area']['gammat_cov']
-
-    amps = np.zeros(ntrial)
-    amp_errs = np.zeros(ntrial)
-    amps_lo = np.zeros(ntrial)
-    amp_lo_errs = np.zeros(ntrial)
-    amps_hi = np.zeros(ntrial)
-    amp_hi_errs = np.zeros(ntrial)
-
-    for i in range(ntrial):
-        # y1 = y3 + noise
-        noise = eu.random.cholesky_sample(covdiff, 1)
-        noise = noise[0, :]
-
-        data['y1area']['gammat']['value'] = (
-            data['y3area']['gammat']['value'] + noise
+    iax = 0
+    for sbin, lbin in BINS2FIT:
+        res_y1area = fit_nfw_lin(
+            rng=rng, data=data['y1area'],
+            lbin=lbin, sbin=sbin, plt=tab_y1area.axes[iax],
+            cosmo_pars=cosmo_pars,
         )
-        amps[i], amp_errs[i] = do_fit(data=data, type='all')
-        amps_lo[i], amp_lo_errs[i] = do_fit(data=data, type='lo')
-        amps_hi[i], amp_hi_errs[i] = do_fit(data=data, type='hi')
+        res_y3area = fit_nfw_lin(
+            rng=rng, data=data['y3area'],
+            lbin=lbin, sbin=sbin, plt=tab_y3area.axes[iax],
+            cosmo_pars=cosmo_pars,
+        )
 
-    mean_amp = amps.mean()
-    std_amp = amps.std()
-    mean_amp_lo = amps_lo.mean()
-    std_amp_lo = amps_lo.std()
-    mean_amp_hi = amps_hi.mean()
-    std_amp_hi = amps_hi.std()
+        reslist.append({
+            'y1area': res_y1area,
+            'y3area': res_y3area,
+        })
 
-    print('mean amp: %g +/- %g' % (mean_amp, std_amp))
-    print('predicted error: %g' % amp_errs.mean())
+        iax += 1
 
-    print('mean amp lo: %g +/- %g' % (mean_amp_lo, std_amp_lo))
-    # print('predicted error lo: %g' % amp_lo_errs.mean())
-    print('mean amp hi: %g +/- %g' % (mean_amp_hi, std_amp_hi))
-    # print('predicted error hi: %g' % amp_hi_errs.mean())
+    tab_y1area.axes[0].legend()
+    tab_y3area.axes[0].legend()
+
+    return reslist, tab_y1area, tab_y3area
+
+
+def make_comb(n):
+    return {
+        'm200': np.zeros(n),
+        'm200_err': np.zeros(n),
+        'c': np.zeros(n),
+        'c_err': np.zeros(n),
+        'B': np.zeros(n),
+        'B_err': np.zeros(n),
+    }
+
+
+def get_stats(*, reslist):
+    num = len(reslist)
+    comb_y1area = make_comb(num)
+    comb_y3area = make_comb(num)
+
+    for i, res in enumerate(reslist):
+        for key in comb_y1area:
+            comb_y1area[key][i] = res['y1area'][key]
+            comb_y3area[key][i] = res['y3area'][key]
+
+    print('-'*70)
+    for key in ['m200', 'B']:
+        if key == 'm200':
+            extra_err = 1.0e12
+        else:
+            extra_err = 0.05
+
+        err1 = comb_y1area['%s_err' % key]
+        err2 = comb_y3area['%s_err' % key]
+
+        err1 = np.sqrt(extra_err**2 + err1**2)
+        err2 = np.sqrt(extra_err**2 + err2**2)
+
+        print_stats(
+            data1=comb_y1area[key],
+            data1_err=err1,
+            data2=comb_y3area[key],
+            data2_err=err2,
+            name=key,
+            # doplot=True,
+        )
+
+
+def make_table():
+    tab = hickory.Table(
+        nrows=4,
+        ncols=4,
+        # figsize=(14, 9.3),
+        figsize=(16, 14),
+        # figsize=(18, 14),
+    )
+    for ax in tab.axes:
+        ax.set(
+            xlabel=r"$r$ [Mpc]",
+            ylabel=r"$\Delta\Sigma ~ [\mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
+            xlim=(0.25, 185),
+            ylim=(0.025, 45),
+        )
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+
+    return tab
 
 
 def main():
-    """
-    calculate the fractional difference over all radii for realizations
-    of the N(z)
-    """
-
     args = get_args()
+    rng = np.random.RandomState(args.seed)
+
+    cosmo_pars = dsfit.cosmopars.get_cosmo_pars()
 
     data = read_data()
-    data['covinv'] = get_covdiff_inv(
-        cov1=data['y1area']['gammat_cov'],
-        cov2=data['y3area']['gammat_cov'],
+
+    add_rescaled_data(
+        data=data['y1area'], source_type='y3',
+        cosmo_pars=cosmo_pars,
+    )
+    add_rescaled_data(
+        data=data['y3area'], source_type='y3',
+        cosmo_pars=cosmo_pars,
     )
 
-    if args.test_noise_bias:
-        test_noise_bias(data=data, ntrial=args.ntrial)
-        return
+    reslist, tab_y1area, tab_y3area = do_fits(
+        rng=rng, data=data, cosmo_pars=cosmo_pars,
+    )
+    get_stats(reslist=reslist)
 
-    amp, amp_err = do_fit(data=data, type='all')
-    amp_lo, amp_err_lo = do_fit(data=data, type='lo')
-    amp_hi, amp_err_hi = do_fit(data=data, type='hi')
+    dpi = 75
 
-    print('amp: %g +/- %g' % (amp, amp_err))
-    print('amp_lo: %g +/- %g' % (amp_lo, amp_err_lo))
-    print('amp_hi: %g +/- %g' % (amp_hi, amp_err_hi))
+    y1area_fname = 'fits-y3lenses-y1area.png'
+    y3area_fname = 'fits-y3lenses-y3area.png'
+
+    print('writing:', y1area_fname)
+    tab_y1area.savefig(y1area_fname, dpi=dpi)
+
+    print('writing:', y3area_fname)
+    tab_y3area.savefig(y3area_fname, dpi=dpi)
+
+    # print('amp: %g +/- %g' % (amp, amp_err))
 
 
 if __name__ == '__main__':

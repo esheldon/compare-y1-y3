@@ -149,7 +149,7 @@ def jackknife(*, data, weights):
     return mn, err
 
 
-def jackknife_ratio(*, data1, weights1, data2, weights2):
+def jackknife_ratio(*, data1, weights1, data2, weights2, doplot=False):
 
     assert data1.size == data2.size
     nchunks = data1.size
@@ -183,11 +183,18 @@ def jackknife_ratio(*, data1, weights1, data2, weights2):
     fac = (nchunks-1)/float(nchunks)
     rat_var = fac*(((rat - rats)**2).sum())
 
+    if doplot:
+        import hickory
+        # hickory.hist( (rats - rats.mean())*fac*np.sqrt(data1.size) + rats.mean()
+        plt = hickory.Plot()
+        plt.hist((rats - rats.mean())*fac + rats.mean(), bins=20)
+        plt.show()
+
     rat_err = np.sqrt(rat_var)
     return rat, rat_err
 
 
-def print_stats(*, data1, data1_err, data2, data2_err, name):
+def print_stats(*, data1, data1_err, data2, data2_err, name, doplot=False):
 
     weights1 = 1.0/data1_err**2
     weights2 = 1.0/data2_err**2
@@ -204,6 +211,7 @@ def print_stats(*, data1, data1_err, data2, data2_err, name):
         weights1=weights1,
         data2=data2,
         weights2=weights2,
+        doplot=doplot,
     )
     print('%s ratio of means:  %g +/- %g' % (name, rat, rat_err))
 
