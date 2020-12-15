@@ -662,8 +662,8 @@ def make_table():
     )
     for ax in tab.axes:
         ax.set(
-            xlabel=r"$r$ [$h^{-1}$ Mpc]",
-            ylabel=r"$\Delta\Sigma ~ [h \mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
+            xlabel=r"$r$ [Mpc]",
+            ylabel=r"$\Delta\Sigma ~ [\mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
             xlim=(0.25, 185),
             ylim=(0.025, 45),
         )
