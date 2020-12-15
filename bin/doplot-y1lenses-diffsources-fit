@@ -8,17 +8,13 @@ TODO:
 
 import fitsio
 import numpy as np
-import esutil as eu
 import hickory
+from compare_y1_y3.fitting import fit_nfw_lin
 from compare_y1_y3.util import (
-    Y3_MVALS,
-    Y1_MVAL,
     Y1_CHI_FACTORS,
-    Y1_ZS_OFFSETS,
-    interpolate_y1_onto_y3,
-    inv_sigma_crit_eff_fast,
-    get_mean_z,
-    jackknife_ratio,
+    # interpolate_y1_onto_y3,
+    print_stats,
+    add_rescaled_data,
 )
 import dsfit
 
@@ -78,38 +74,6 @@ BINS2FIT = [
     # (4, 5),  # *
 
 ]
-# BINS2FIT = [
-#     (1, 1),
-#     (2, 1),
-#     (3, 1),
-#     (4, 1),
-#
-#     (1, 2),
-#     (2, 2),
-#     (3, 2),
-#     (4, 2),
-#
-#     (1, 3),  # marginal
-#     # (1, 4),  # *
-#     #
-#     (2, 3),
-#     # (2, 4),   # *
-#     #
-#     (3, 3),
-#     # (3, 4),  # *
-#     #
-#     (4, 3),
-#     # (4, 4),  # *
-#
-#     (1, 4),
-#     (2, 4),
-#     (3, 4),
-#     (4, 4),
-#
-#
-# ]
-#
-# BINS2FIT = [(4, 4)]
 
 
 def get_args():
@@ -171,6 +135,7 @@ def read_data_rerun():
             'gammat_cov': gtcov_y1y1,
             'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
             'nzs': fitsio.read(y1lenses_y1sources, ext='nz_source', lower=True),  # noqa
+            'chi_factors': Y1_CHI_FACTORS,
         },
         'y1y3': {
             'gammat': gt_y1y3,
@@ -178,6 +143,7 @@ def read_data_rerun():
             'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
             'nzs_samples': nzs_samples,
             'nzs': nzs,
+            'chi_factors': Y1_CHI_FACTORS,
         }
     }
 
@@ -242,6 +208,7 @@ def read_data():
             'gammat_cov': gtcov_y1y1,
             'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
             'nzs': fitsio.read(y1lenses_y1sources, ext='nz_source', lower=True),  # noqa
+            'chi_factors': Y1_CHI_FACTORS,
         },
         'y1y3': {
             'gammat': gt_y1y3,
@@ -252,6 +219,7 @@ def read_data():
             'nzl': fitsio.read(y1lenses_y1sources, ext='nz_lens', lower=True),  # noqa
             'nzs_samples': nzs_samples,
             'nzs': nzs,
+            'chi_factors': Y1_CHI_FACTORS,
         }
     }
 
@@ -261,267 +229,6 @@ def read_data():
         plt.show(dpi=300)
 
     return data
-
-
-def get_nofz(*, data, lbin, sbin, sample=False):
-    """
-    get n(z) data for the given lens and source bin.  A random y3 source n(z)
-    is used each time this code is called
-
-
-    the Y1 n(z) are shifted according to the prior each time this is called
-
-    data: dict
-        Dictionary of arrays, keyed by
-            y1y1: y1 lenses, y1 sources
-            y1y3: y1 lenses, y3 sources
-        The data for each key is
-            'gammat': The gamma_t data vector for all l/s bins
-            'nzl': redshift and n(z) for the lenses for all l/s bins
-            'nzs': redshift and n(z) for the sources for all l/s bins
-    lbin: int
-        lens bin, 1 offset
-    sbin: int
-        source bin, 1 offst
-
-    Returns
-    -------
-    dict keyed by y1y1 or y1y3 with the particular data from the
-    requested lens/source bins.  Each key has entries
-        'lzbin': lens z grid
-        'lnofz': n(zl) on the grid
-        'szbin': source z grid
-        'snofz': n(zs) on z grid
-    """
-
-    if sample:
-        nsamp = len(data['y1y3']['nzs_samples'])
-        i = np.random.randint(nsamp)
-        y1y3_nzs = data['y1y3']['nzs_samples'][i]
-    else:
-        y1y3_nzs = data['y1y3']['nzs']
-
-    lbin_name = 'bin%d' % lbin
-    sbin_name = 'bin%d' % sbin
-
-    moff = Y1_ZS_OFFSETS[sbin-1][0]
-    woff = Y1_ZS_OFFSETS[sbin-1][1]
-    if sample:
-        z1off = np.random.normal(
-            loc=moff,
-            scale=woff,
-        )
-    else:
-        z1off = moff
-
-    y1_zs = data['y1y1']['nzs']['z_mid'] + z1off
-
-    w, = np.where(y1_zs > 0)
-    y1_zs = y1_zs[w]
-    y1_nofzs = data['y1y1']['nzs'][sbin_name][w]
-
-    zdata = {
-        'y1y1': {
-            'lzbin': data['y1y1']['nzl']['z_mid'],
-            'lnofz': data['y1y1']['nzl'][lbin_name],
-            'szbin': y1_zs,
-            'snofz': y1_nofzs,
-        },
-        'y1y3': {
-            'lzbin': data['y1y3']['nzl']['z_mid'],
-            'lnofz': data['y1y3']['nzl'][lbin_name],
-            'szbin': y1y3_nzs['z_mid'],
-            'snofz': y1y3_nzs[sbin_name],
-        }
-    }
-    return zdata
-
-
-def get_oneplusm(*, sbin, sample=False, use_y1_m=False):
-    """
-    """
-    y3_oneplusm = 1 + Y3_MVALS[sbin-1][0]
-
-    if use_y1_m:
-        y1_oneplusm = 1 + Y1_MVAL
-    else:
-        y1_oneplusm = y3_oneplusm
-
-        if sample:
-            y1_oneplusm += np.random.normal(scale=Y3_MVALS[sbin-1][1])
-
-    return y1_oneplusm, y3_oneplusm
-
-
-def add_rescaled_data(*, data, cosmo_pars, sample=False, use_y1_m=False):
-
-    npts = data['y1y3']['gammat']['value'].size  # - 4*20
-    data['y1y1']['r'] = np.zeros(npts)
-    data['y1y1']['ds'] = np.zeros(npts)
-    data['y1y1']['dscov'] = np.zeros((npts, npts))
-
-    data['y1y3']['r'] = np.zeros(npts)
-    data['y1y3']['ds'] = np.zeros(npts)
-    data['y1y3']['dscov'] = np.zeros((npts, npts))
-
-    for lbin in range(1, 5+1):
-        for sbin in range(1, 4+1):
-
-            zdata = get_nofz(data=data, lbin=lbin, sbin=sbin, sample=sample)
-
-            siginv_y1y1 = inv_sigma_crit_eff_fast(
-                zlbin=zdata['y1y1']['lzbin'],
-                nzl=zdata['y1y1']['lnofz'],
-                zsbin=zdata['y1y1']['szbin'],
-                nzs=zdata['y1y1']['snofz'],
-                cosmo_pars=cosmo_pars,
-                # zsbin=zdata['y1y3']['szbin'],
-                # nzs=zdata['y1y3']['snofz'],
-            )
-            siginv_y1y3 = inv_sigma_crit_eff_fast(
-                zlbin=zdata['y1y3']['lzbin'],
-                nzl=zdata['y1y3']['lnofz'],
-                zsbin=zdata['y1y3']['szbin'],
-                nzs=zdata['y1y3']['snofz'],
-                cosmo_pars=cosmo_pars,
-            )
-
-            data['y1y1']['zl_mean'] = get_mean_z(
-                z=zdata['y1y1']['lzbin'],
-                nz=zdata['y1y1']['lnofz'],
-            )
-            data['y1y3']['zl_mean'] = data['y1y1']['zl_mean']
-            # print('mean zlens:', data['y1y1']['zl_mean'])
-            # print('siginv_y1y1:', siginv_y1y1)
-            # print('siginv_y1y3:', siginv_y1y3)
-
-            y1_oneplusm, y3_oneplusm = get_oneplusm(
-                sbin=sbin, sample=sample, use_y1_m=use_y1_m,
-            )
-
-            wy1y1, = np.where(
-                (data['y1y1']['gammat']['bin1'] == lbin) &
-                (data['y1y1']['gammat']['bin2'] == sbin)
-            )
-            wy1y3, = np.where(
-                (data['y1y3']['gammat']['bin1'] == lbin) &
-                (data['y1y3']['gammat']['bin2'] == sbin)
-            )
-
-            fac_y1y1 = 1.0/y1_oneplusm/siginv_y1y1
-            fac_y1y3 = 1.0/y3_oneplusm/siginv_y1y3
-
-            ds_y1y1 = data['y1y1']['gammat']['value'][wy1y1] * fac_y1y1
-            ds_y1y3 = data['y1y3']['gammat']['value'][wy1y3] * fac_y1y3
-
-            rad_y1y1 = np.deg2rad(data['y1y1']['gammat']['ang'][wy1y1]/60)
-            r_y1y1 = rad_y1y1*Y1_CHI_FACTORS[lbin-1]
-            rad_y1y3 = np.deg2rad(data['y1y3']['gammat']['ang'][wy1y3]/60)
-            r_y1y3 = rad_y1y3*Y1_CHI_FACTORS[lbin-1]
-
-            data['y1y1']['r'][wy1y1] = r_y1y1
-            data['y1y3']['r'][wy1y3] = r_y1y3
-
-            ds_y1y1_interp = interpolate_y1_onto_y3(r_y1y3, r_y1y1, ds_y1y1)
-
-            imin, imax = wy1y1[0], wy1y1[-1]+1
-            # print('sbin, lbin:', imin, imax)
-            cov_y1y1 = (
-                data['y1y1']['gammat_cov'][imin:imax, imin:imax] * fac_y1y1**2
-            )
-            imin, imax = wy1y3[0], wy1y3[-1]+1
-            cov_y1y3 = (
-                data['y1y3']['gammat_cov'][imin:imax, imin:imax] * fac_y1y3**2
-            )
-            # print('imin, imax:', imin, imax)
-
-            # ds*r**pow == constant
-            # same as fitting ds to 1/r**pow
-
-            # data['y1y1']['ds'][wy1y1] = ds_y1y1
-            data['y1y1']['ds'][wy1y1] = ds_y1y1_interp
-            data['y1y1']['dscov'][imin:imax, imin:imax] = cov_y1y1
-
-            data['y1y3']['ds'][wy1y3] = ds_y1y3
-            data['y1y3']['dscov'][imin:imax, imin:imax] = cov_y1y3
-
-
-def do_one_fit(*, rng, data, sbin, lbin, plt, cosmo_pars):
-    w, = np.where(
-        (data['gammat']['bin1'] == lbin) &
-        (data['gammat']['bin2'] == sbin)
-    )
-    imin, imax = w[0], w[-1]+1
-
-    r = data['r'][w]
-    dsig = data['ds'][w]
-    dsigcov = data['dscov'][imin:imax, imin:imax]
-
-    fitter = dsfit.NFWBiasFitter(
-        z=data['zl_mean'],
-        r=r,
-        cosmo_pars=cosmo_pars,
-    )
-
-    B_bounds = [0.3, 2.0]
-    c_bounds = [0.1, 5.0]
-
-    r200_guess = 0.3*rng.uniform(low=0.9, high=1.1)
-    c_guess = rng.uniform(low=c_bounds[0], high=c_bounds[1])
-    B_guess = rng.uniform(low=B_bounds[0], high=B_bounds[1])
-    guess = np.array([r200_guess, c_guess, B_guess])
-
-    res = fitter.fit(
-        dsig=dsig,
-        dsigcov=dsigcov,
-        guess=guess,
-        c_bounds=c_bounds,
-        B_bounds=B_bounds,
-    )
-
-    print('-'*70)
-    print('sbin %d, lbin %d' % (sbin, lbin))
-    print('r200: %(r200)g +/- %(r200_err)g' % res)
-    print('c: %(c)g +/- %(c_err)g' % res)
-    print('B: %(B)g +/- %(B_err)g' % res)
-    print('m200: %(m200)g +/- %(m200_err)g' % res)
-
-    dsfit.fit.plot(
-        r=r,
-        z=data['zl_mean'],
-        r200=res['r200'],
-        c=res['c'],
-        B=res['B'],
-        dsig=dsig,
-        dsigcov=dsigcov,
-        # xlim=(0.25, 65),
-        # xlim=(0.25, 185),
-        # ylim=(0.025, 45),
-        plt=plt,
-    )
-    x = 0.075
-    plt.ntext(x, 0.25, 'sbin: %d, lbin: %d' % (sbin, lbin))
-    plt.ntext(x, 0.20, r'm200: %(m200).3g $\pm$ %(m200_err).3g' % res)
-    plt.ntext(x, 0.15, r'B: %(B).3g $\pm$ %(B_err).3g' % res)
-    plt.ntext(x, 0.10, r'c: %(c).3g $\pm$ %(c_err).3g' % res)
-    # plt.show()
-
-    return res
-
-
-def do_fit(*, rng, data, lbin, sbin, cosmo_pars, plt1, plt3):
-    res_y1y1 = do_one_fit(
-        rng=rng, data=data['y1y1'],
-        lbin=lbin, sbin=sbin, plt=plt1,
-        cosmo_pars=cosmo_pars,
-    )
-    res_y1y3 = do_one_fit(
-        rng=rng, data=data['y1y3'],
-        lbin=lbin, sbin=sbin, plt=plt3,
-        cosmo_pars=cosmo_pars,
-    )
-
-    return res_y1y1, res_y1y3
 
 
 def make_table():
@@ -553,10 +260,14 @@ def do_fits(*, rng, data, cosmo_pars):
 
     iax = 0
     for sbin, lbin in BINS2FIT:
-        res_y1y1, res_y1y3 = do_fit(
-            rng=rng, data=data, lbin=lbin, sbin=sbin,
-            plt1=tab_y1y1.axes[iax],
-            plt3=tab_y1y3.axes[iax],
+        res_y1y1 = fit_nfw_lin(
+            rng=rng, data=data['y1y1'],
+            lbin=lbin, sbin=sbin, plt=tab_y1y1.axes[iax],
+            cosmo_pars=cosmo_pars,
+        )
+        res_y1y3 = fit_nfw_lin(
+            rng=rng, data=data['y1y3'],
+            lbin=lbin, sbin=sbin, plt=tab_y1y3.axes[iax],
             cosmo_pars=cosmo_pars,
         )
 
@@ -571,56 +282,6 @@ def do_fits(*, rng, data, cosmo_pars):
     tab_y1y3.axes[0].legend()
 
     return reslist, tab_y1y1, tab_y1y3
-
-
-def make_comb(n):
-    return {
-        'm200': np.zeros(n),
-        'm200_err': np.zeros(n),
-        'c': np.zeros(n),
-        'c_err': np.zeros(n),
-        'B': np.zeros(n),
-        'B_err': np.zeros(n),
-    }
-
-
-def get_stat(*, comb_y1y1, comb_y1y3, key, dolog):
-
-    y1y1vals = comb_y1y1[key]
-    y1y3vals = comb_y1y3[key]
-    plot2hist(
-        data_y1y1=y1y1vals,
-        data_y1y3=y1y3vals,
-        key=key,
-        dolog=dolog,
-    )
-
-    y1y1_mean, y1y1_err = eu.stat.wmom(
-        y1y1vals,
-        1.0/comb_y1y1['%s_err' % key]**2,
-        calcerr=True,
-    )
-    y1y3_mean, y1y3_err = eu.stat.wmom(
-        y1y3vals,
-        1.0/comb_y1y3['%s_err' % key]**2,
-        calcerr=True,
-    )
-
-    print('%s means:' % key)
-    print('y1y1: %g +/- %g' % (y1y1_mean, y1y1_err))
-    print('y1y3: %g +/- %g' % (y1y3_mean, y1y3_err))
-
-    # avg = 0.5*(y1y1_mean + y1y3_mean)
-    # rat = y1y1_mean/y1y3_mean
-    # rat_err = rat * np.sqrt(np.abs(y1y1_err**2 - y1y3_err**2)) / avg
-
-    rat, rat_err = jackknife_ratio(
-        data1=y1y1vals,
-        weights1=1.0/comb_y1y1['%s_err' % key]**2,
-        data2=y1y3vals,
-        weights2=1.0/comb_y1y3['%s_err' % key]**2,
-    )
-    print('ratio of means:  %g +/- %g' % (rat, rat_err))
 
 
 def plot_hist_rat(data, key):
@@ -674,6 +335,17 @@ def plot2hist(*, data_y1y1, data_y1y3, key, dolog=True):
     return plt
 
 
+def make_comb(n):
+    return {
+        'm200': np.zeros(n),
+        'm200_err': np.zeros(n),
+        'c': np.zeros(n),
+        'c_err': np.zeros(n),
+        'B': np.zeros(n),
+        'B_err': np.zeros(n),
+    }
+
+
 def get_stats(*, reslist):
     num = len(reslist)
     comb_y1y1 = make_comb(num)
@@ -686,14 +358,12 @@ def get_stats(*, reslist):
 
     print('-'*70)
     for key in ['m200', 'B']:
-        if key == 'm200':
-            dolog = False
-        else:
-            dolog = False
-
-        get_stat(
-            comb_y1y1=comb_y1y1, comb_y1y3=comb_y1y3, key=key,
-            dolog=dolog,
+        print_stats(
+            data1=comb_y1y1[key],
+            data1_err=comb_y1y1['%s_err' % key],
+            data2=comb_y1y3[key],
+            data2_err=comb_y1y3['%s_err' % key],
+            name=key,
         )
 
 
@@ -721,19 +391,36 @@ def main():
         raise RuntimeError('set up sampling')
         for i in range(args.ntrial):
             add_rescaled_data(
-                data=data, sample=args.sample,
+                data=data['y1y1'],
+                source_type='y1',
+                sample=args.sample,
                 use_y1_m=args.use_y1_m,
                 cosmo_pars=cosmo_pars,
             )
+            add_rescaled_data(
+                data=data['y1y3'],
+                source_type='y3',
+                sample=args.sample,
+                use_y1_m=args.use_y1_m,
+                cosmo_pars=cosmo_pars,
+            )
+
             reslist, tab_y1y1, tab_y1y3 = do_fits(
                 rng=rng, data=data, cosmo_pars=cosmo_pars,
             )
 
     else:
         add_rescaled_data(
-            data=data, use_y1_m=args.use_y1_m,
+            data=data['y1y1'], source_type='y1',
+            use_y1_m=args.use_y1_m,
             cosmo_pars=cosmo_pars,
         )
+        add_rescaled_data(
+            data=data['y1y3'], source_type='y3',
+            use_y1_m=args.use_y1_m,
+            cosmo_pars=cosmo_pars,
+        )
+
         reslist, tab_y1y1, tab_y1y3 = do_fits(
             rng=rng, data=data, cosmo_pars=cosmo_pars,
         )

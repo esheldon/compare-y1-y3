@@ -124,6 +124,31 @@ def fit_amp(*, d, t, covinv):
     return amp, amp_err
 
 
+def jackknife(*, data, weights):
+
+    nchunks = data.size
+
+    sum = (data * weights).sum()
+    wsum = weights.sum()
+
+    mn = sum/wsum
+
+    mns = np.zeros(data.size)
+
+    for i in range(nchunks):
+
+        tsum = sum - data[i] * weights[i]
+        twsum = wsum - weights[i]
+
+        mns[i] = tsum/twsum
+
+    fac = (nchunks-1)/float(nchunks)
+    var = fac*(((mns - mn)**2).sum())
+
+    err = np.sqrt(var)
+    return mn, err
+
+
 def jackknife_ratio(*, data1, weights1, data2, weights2):
 
     assert data1.size == data2.size
@@ -160,3 +185,212 @@ def jackknife_ratio(*, data1, weights1, data2, weights2):
 
     rat_err = np.sqrt(rat_var)
     return rat, rat_err
+
+
+def print_stats(*, data1, data1_err, data2, data2_err, name):
+
+    weights1 = 1.0/data1_err**2
+    weights2 = 1.0/data2_err**2
+
+    m1, m1err = jackknife(data=data1, weights=weights1)
+    m2, m2err = jackknife(data=data2, weights=weights2)
+
+    print('%s means:' % name)
+    print('%s1: %g +/- %g' % (name, m1, m1err))
+    print('%s2: %g +/- %g' % (name, m2, m2err))
+
+    rat, rat_err = jackknife_ratio(
+        data1=data1,
+        weights1=weights1,
+        data2=data2,
+        weights2=weights2,
+    )
+    print('%s ratio of means:  %g +/- %g' % (name, rat, rat_err))
+
+
+def get_y1_nofz(*, data, lbin, sbin, sample=False):
+    """
+    get n(z) data for the given lens and source bin.  A random y3 source n(z)
+    is used each time this code is called
+
+
+    the Y1 n(z) are shifted according to the prior each time this is called
+
+    data: dict
+        Dictionary of arrays, keyed by
+            y1y1: y1 lenses, y1 sources
+            y1y3: y1 lenses, y3 sources
+        The data for each key is
+            'gammat': The gamma_t data vector for all l/s bins
+            'nzl': redshift and n(z) for the lenses for all l/s bins
+            'nzs': redshift and n(z) for the sources for all l/s bins
+    lbin: int
+        lens bin, 1 offset
+    sbin: int
+        source bin, 1 offst
+
+    Returns
+    -------
+    dict keyed by y1y1 or y1y3 with the particular data from the
+    requested lens/source bins.  Each key has entries
+        'lzbin': lens z grid
+        'lnofz': n(zl) on the grid
+        'szbin': source z grid
+        'snofz': n(zs) on z grid
+    """
+
+    lbin_name = 'bin%d' % lbin
+    sbin_name = 'bin%d' % sbin
+
+    moff = Y1_ZS_OFFSETS[sbin-1][0]
+    woff = Y1_ZS_OFFSETS[sbin-1][1]
+    if sample:
+        z1off = np.random.normal(
+            loc=moff,
+            scale=woff,
+        )
+    else:
+        z1off = moff
+
+    zs = data['nzs']['z_mid'] + z1off
+
+    w, = np.where(zs > 0)
+    zs = zs[w]
+    nofzs = data['nzs'][sbin_name][w]
+
+    zdata = {
+        'lzbin': data['nzl']['z_mid'],
+        'lnofz': data['nzl'][lbin_name],
+        'szbin': zs,
+        'snofz': nofzs,
+    }
+    return zdata
+
+
+def get_y3_nofz(*, data, lbin, sbin, sample=False):
+    """
+    get n(z) data for the given lens and source bin.  A random y3 source n(z)
+    is used each time this code is called
+
+
+    the Y1 n(z) are shifted according to the prior each time this is called
+
+    data: dict
+        Dictionary of arrays, keyed by
+            y1y1: y1 lenses, y1 sources
+            y1y3: y1 lenses, y3 sources
+        The data for each key is
+            'gammat': The gamma_t data vector for all l/s bins
+            'nzl': redshift and n(z) for the lenses for all l/s bins
+            'nzs': redshift and n(z) for the sources for all l/s bins
+    lbin: int
+        lens bin, 1 offset
+    sbin: int
+        source bin, 1 offst
+
+    Returns
+    -------
+    dict keyed by y1y1 or y1y3 with the particular data from the
+    requested lens/source bins.  Each key has entries
+        'lzbin': lens z grid
+        'lnofz': n(zl) on the grid
+        'szbin': source z grid
+        'snofz': n(zs) on z grid
+    """
+
+    if sample:
+        nsamp = len(data['nzs_samples'])
+        i = np.random.randint(nsamp)
+        nzs = data['nzs_samples'][i]
+    else:
+        nzs = data['nzs']
+
+    lbin_name = 'bin%d' % lbin
+    sbin_name = 'bin%d' % sbin
+
+    zdata = {
+        'lzbin': data['nzl']['z_mid'],
+        'lnofz': data['nzl'][lbin_name],
+        'szbin': nzs['z_mid'],
+        'snofz': nzs[sbin_name],
+    }
+    return zdata
+
+
+def get_oneplusm(*, sbin, source_type, sample=False, use_y1_m=False):
+    y3_oneplusm = 1 + Y3_MVALS[sbin-1][0]
+    if source_type == 'y3':
+        oneplusm = y3_oneplusm
+    else:
+        if use_y1_m:
+            oneplusm = 1 + Y1_MVAL
+        else:
+            oneplusm = y3_oneplusm
+            if sample:
+                oneplusm = (
+                    oneplusm + np.random.normal(scale=Y3_MVALS[sbin-1][1])
+                )
+
+    return oneplusm
+
+
+def add_rescaled_data(
+    *, data, cosmo_pars, source_type,
+    sample=False, use_y1_m=False,
+):
+
+    npts = data['gammat']['value'].size
+
+    data['r'] = np.zeros(npts)
+    data['ds'] = np.zeros(npts)
+    data['dscov'] = np.zeros((npts, npts))
+
+    for lbin in range(1, 5+1):
+        for sbin in range(1, 4+1):
+
+            if source_type == 'y1':
+                zdata = get_y1_nofz(
+                    data=data, lbin=lbin, sbin=sbin, sample=sample,
+                )
+            else:
+                zdata = get_y3_nofz(
+                    data=data, lbin=lbin, sbin=sbin, sample=sample,
+                )
+
+            siginv = inv_sigma_crit_eff_fast(
+                zlbin=zdata['lzbin'],
+                nzl=zdata['lnofz'],
+                zsbin=zdata['szbin'],
+                nzs=zdata['snofz'],
+                cosmo_pars=cosmo_pars,
+            )
+
+            data['zl_mean'] = get_mean_z(
+                z=zdata['lzbin'],
+                nz=zdata['lnofz'],
+            )
+
+            oneplusm = get_oneplusm(
+                sbin=sbin, source_type=source_type,
+                sample=sample, use_y1_m=use_y1_m,
+            )
+
+            w, = np.where(
+                (data['gammat']['bin1'] == lbin) &
+                (data['gammat']['bin2'] == sbin)
+            )
+            fac = 1.0/oneplusm/siginv
+
+            ds = data['gammat']['value'][w] * fac
+            rad = np.deg2rad(data['gammat']['ang'][w]/60)
+            r = rad * data['chi_factors'][lbin-1]
+
+            data['r'][w] = r
+
+            imin, imax = w[0], w[-1]+1
+            cov = (
+                data['gammat_cov'][imin:imax, imin:imax] * fac**2
+            )
+
+            data['ds'][w] = ds
+            data['dscov'][imin:imax, imin:imax] = cov
