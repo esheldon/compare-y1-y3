@@ -124,5 +124,39 @@ def fit_amp(*, d, t, covinv):
     return amp, amp_err
 
 
+def jackknife_ratio(*, data1, weights1, data2, weights2):
 
+    assert data1.size == data2.size
+    nchunks = data1.size
 
+    wsum1 = weights1.sum()
+    wsum2 = weights2.sum()
+
+    sum1 = (data1 * weights1).sum()
+    sum2 = (data2 * weights2).sum()
+
+    mn1 = sum1/wsum1
+    mn2 = sum2/wsum2
+
+    rat = mn1/mn2
+
+    rats = np.zeros(data1.size)
+
+    for i in range(nchunks):
+
+        tsum1 = sum1 - data1[i] * weights1[i]
+        tsum2 = sum2 - data2[i] * weights2[i]
+
+        twsum1 = wsum1 - weights1[i]
+        twsum2 = wsum2 - weights2[i]
+
+        tmn1 = tsum1/twsum1
+        tmn2 = tsum2/twsum2
+
+        rats[i] = tmn1/tmn2
+
+    fac = (nchunks-1)/float(nchunks)
+    rat_var = fac*(((rat - rats)**2).sum())
+
+    rat_err = np.sqrt(rat_var)
+    return rat, rat_err

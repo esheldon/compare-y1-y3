@@ -19,6 +19,7 @@ from compare_y1_y3.util import (
     interpolate_y1_onto_y3,
     inv_sigma_crit_eff_fast,
     get_mean_z,
+    jackknife_ratio,
 )
 import dsfit
 
@@ -744,13 +745,21 @@ def get_stat(*, comb_y1y1, comb_y1y3, key, dolog):
         1.0/comb_y1y3['%s_err' % key]**2,
         calcerr=True,
     )
+
     print('%s means:' % key)
     print('y1y1: %g +/- %g' % (y1y1_mean, y1y1_err))
     print('y1y3: %g +/- %g' % (y1y3_mean, y1y3_err))
 
-    avg = 0.5*(y1y1_mean + y1y3_mean)
-    rat = y1y1_mean/y1y3_mean
-    rat_err = rat * np.sqrt(np.abs(y1y1_err**2 - y1y3_err**2)) / avg
+    # avg = 0.5*(y1y1_mean + y1y3_mean)
+    # rat = y1y1_mean/y1y3_mean
+    # rat_err = rat * np.sqrt(np.abs(y1y1_err**2 - y1y3_err**2)) / avg
+
+    rat, rat_err = jackknife_ratio(
+        data1=y1y1vals,
+        weights1=1.0/comb_y1y1['%s_err' % key]**2,
+        data2=y1y3vals,
+        weights2=1.0/comb_y1y3['%s_err' % key]**2,
+    )
     print('ratio of means:  %g +/- %g' % (rat, rat_err))
 
 
