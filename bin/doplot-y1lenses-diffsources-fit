@@ -253,7 +253,8 @@ def do_fits(*, rng, data, cc):
 
     tab_y1y1 = make_table()
     tab_y1y3 = make_table()
-    reslist = []
+    y1y1_reslist = []
+    y1y3_reslist = []
 
     iax = 0
     for sbin, lbin in BINS2FIT:
@@ -268,17 +269,15 @@ def do_fits(*, rng, data, cc):
             cc=cc,
         )
 
-        reslist.append({
-            'y1y1': res_y1y1,
-            'y1y3': res_y1y3,
-        })
+        y1y1_reslist.append(res_y1y1)
+        y1y3_reslist.append(res_y1y3)
 
         iax += 1
 
     tab_y1y1.axes[0].legend()
     tab_y1y3.axes[0].legend()
 
-    return reslist, tab_y1y1, tab_y1y3
+    return y1y1_reslist, y1y3_reslist, tab_y1y1, tab_y1y3
 
 
 def plot_hist_rat(data, key):
@@ -332,54 +331,6 @@ def plot2hist(*, data_y1y1, data_y1y3, key, dolog=True):
     return plt
 
 
-def make_comb(n):
-    return {
-        'm200': np.zeros(n),
-        'm200_err': np.zeros(n),
-        'c': np.zeros(n),
-        'c_err': np.zeros(n),
-        'B': np.zeros(n),
-        'B_err': np.zeros(n),
-        'b': np.zeros(n),
-        'b_err': np.zeros(n),
-    }
-
-
-def get_stats(*, reslist):
-    num = len(reslist)
-    comb_y1y1 = make_comb(num)
-    comb_y1y3 = make_comb(num)
-
-    for i, res in enumerate(reslist):
-        for key in comb_y1y1:
-            comb_y1y1[key][i] = res['y1y1'][key]
-            comb_y1y3[key][i] = res['y1y3'][key]
-
-    print('-'*70)
-    for key in ['m200', 'B', 'b']:
-
-        if key == 'm200':
-            extra_err = 1.0e12
-        elif key == 'b':
-            extra_err = 0.2
-        else:
-            extra_err = 0.05
-
-        err1 = comb_y1y1['%s_err' % key]
-        err2 = comb_y1y3['%s_err' % key]
-
-        err1 = np.sqrt(extra_err**2 + err1**2)
-        err2 = np.sqrt(extra_err**2 + err2**2)
-
-        print_stats(
-            data1=comb_y1y1[key],
-            data1_err=err1,
-            data2=comb_y1y3[key],
-            data2_err=err2,
-            name=key,
-        )
-
-
 def main():
     args = get_args()
     rng = np.random.RandomState(args.seed)
@@ -420,7 +371,7 @@ def main():
                 cosmo_pars=cosmo_pars,
             )
 
-            reslist, tab_y1y1, tab_y1y3 = do_fits(
+            y1y1_reslist, y1y3_reslist, tab_y1y1, tab_y1y3 = do_fits(
                 rng=rng, data=data, cc=cc,
             )
 
@@ -441,10 +392,10 @@ def main():
         y1y3_ds_file = 'y1lenses-y3sources-y1area-delta-sigma.fits'
         write_delta_sigma(filename=y1y3_ds_file, data=data['y1y3'])
 
-        reslist, tab_y1y1, tab_y1y3 = do_fits(
+        y1y1_reslist, y1y3_reslist, tab_y1y1, tab_y1y3 = do_fits(
             rng=rng, data=data, cc=cc,
         )
-        get_stats(reslist=reslist)
+        print_stats(reslist1=y1y1_reslist, reslist2=y1y3_reslist)
 
         dpi = 75
         print('writing:', y1y1_fname)

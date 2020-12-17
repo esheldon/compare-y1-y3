@@ -85,7 +85,8 @@ def do_fits(*, rng, data, cc):
 
     tab_y1area = make_table()
     tab_y3area = make_table()
-    reslist = []
+    y1area_reslist = []
+    y3area_reslist = []
 
     iax = 0
     for sbin, lbin in BINS2FIT:
@@ -100,63 +101,15 @@ def do_fits(*, rng, data, cc):
             cc=cc,
         )
 
-        reslist.append({
-            'y1area': res_y1area,
-            'y3area': res_y3area,
-        })
+        y1area_reslist.append(res_y1area)
+        y3area_reslist.append(res_y3area)
 
         iax += 1
 
     tab_y1area.axes[0].legend()
     tab_y3area.axes[0].legend()
 
-    return reslist, tab_y1area, tab_y3area
-
-
-def make_comb(n):
-    return {
-        'm200': np.zeros(n),
-        'm200_err': np.zeros(n),
-        'c': np.zeros(n),
-        'c_err': np.zeros(n),
-        'B': np.zeros(n),
-        'B_err': np.zeros(n),
-        'b': np.zeros(n),
-        'b_err': np.zeros(n),
-    }
-
-
-def get_stats(*, reslist):
-    num = len(reslist)
-    comb_y1area = make_comb(num)
-    comb_y3area = make_comb(num)
-
-    for i, res in enumerate(reslist):
-        for key in comb_y1area:
-            comb_y1area[key][i] = res['y1area'][key]
-            comb_y3area[key][i] = res['y3area'][key]
-
-    print('-'*70)
-    for key in ['m200', 'B', 'b']:
-        if key == 'm200':
-            extra_err = 1.0e12
-        else:
-            extra_err = 0.05
-
-        err1 = comb_y1area['%s_err' % key]
-        err2 = comb_y3area['%s_err' % key]
-
-        err1 = np.sqrt(extra_err**2 + err1**2)
-        err2 = np.sqrt(extra_err**2 + err2**2)
-
-        print_stats(
-            data1=comb_y1area[key],
-            data1_err=err1,
-            data2=comb_y3area[key],
-            data2_err=err2,
-            name=key,
-            # doplot=True,
-        )
+    return y1area_reslist, y3area_reslist, tab_y1area, tab_y3area
 
 
 def make_table():
@@ -185,9 +138,7 @@ def main():
     rng = np.random.RandomState(args.seed)
 
     cc = ccSetCosmology('planck18')
-    # cosmo_pars = get_cosmo_pars_from_cc(cc)
-    import dsfit
-    cosmo_pars = dsfit.get_cosmo_pars()
+    cosmo_pars = get_cosmo_pars_from_cc(cc)
     print('cosmo_pars:', cosmo_pars)
 
     data = read_data()
@@ -206,10 +157,10 @@ def main():
     y3area_ds_file = 'y3lenses-y3sources-y3area-delta-sigma.fits'
     write_delta_sigma(filename=y3area_ds_file, data=data['y3area'])
 
-    reslist, tab_y1area, tab_y3area = do_fits(
+    y1area_reslist, y3area_reslist, tab_y1area, tab_y3area = do_fits(
         rng=rng, data=data, cc=cc,
     )
-    get_stats(reslist=reslist)
+    print_stats(reslist1=y1area_reslist, reslist2=y3area_reslist)
 
     dpi = 75
 

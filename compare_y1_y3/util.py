@@ -206,17 +206,65 @@ def jackknife_ratio(*, data1, weights1, data2, weights2, doplot=False):
     return rat, rat_err
 
 
-def print_stats(*, data1, data1_err, data2, data2_err, name, doplot=False):
+def jackknife_ratio_sameweight(*, data1, data2, weights, doplot=False):
 
-    weights1 = 1.0/data1_err**2
-    weights2 = 1.0/data2_err**2
+    assert data1.size == data2.size
+    nchunks = data1.size
+
+    wsum = weights.sum()
+
+    sum1 = (data1 * weights).sum()
+    sum2 = (data2 * weights).sum()
+
+    mn1 = sum1/wsum
+    mn2 = sum2/wsum
+
+    rat = mn1/mn2
+
+    rats = np.zeros(data1.size)
+
+    for i in range(nchunks):
+
+        tsum1 = sum1 - data1[i] * weights[i]
+        tsum2 = sum2 - data2[i] * weights[i]
+
+        twsum = wsum - weights[i]
+
+        tmn1 = tsum1/twsum
+        tmn2 = tsum2/twsum
+
+        rats[i] = tmn1/tmn2
+
+    fac = (nchunks-1)/float(nchunks)
+    rat_var = fac*(((rat - rats)**2).sum())
+
+    if doplot:
+        import hickory
+        plt = hickory.Plot()
+        plt.hist((rats - rats.mean())*fac + rats.mean(), bins=20)
+        plt.show()
+
+    rat_err = np.sqrt(rat_var)
+    return rat, rat_err
+
+
+def make_comb(n):
+    return {
+        'm200': np.zeros(n),
+        'm200_err': np.zeros(n),
+        'c': np.zeros(n),
+        'c_err': np.zeros(n),
+        'B': np.zeros(n),
+        'B_err': np.zeros(n),
+        'b': np.zeros(n),
+        'b_err': np.zeros(n),
+    }
+
+
+def get_stats(*, data1, weights1, data2, weights2, doplot=False):
 
     m1, m1err = jackknife(data=data1, weights=weights1)
     m2, m2err = jackknife(data=data2, weights=weights2)
-
-    print('%s means:' % name)
-    print('%s1: %g +/- %g' % (name, m1, m1err))
-    print('%s2: %g +/- %g' % (name, m2, m2err))
 
     rat, rat_err = jackknife_ratio(
         data1=data1,
@@ -225,7 +273,98 @@ def print_stats(*, data1, data1_err, data2, data2_err, name, doplot=False):
         weights2=weights2,
         doplot=doplot,
     )
-    print('%s ratio of means:  %g +/- %g' % (name, rat, rat_err))
+
+    return {
+        'm1': m1,
+        'm1err': m1err,
+        'm2': m2,
+        'm2err': m2err,
+        'rat': rat,
+        'rat_err': rat_err,
+    }
+
+
+def print_stats(*, reslist1, reslist2):
+    num = len(reslist1)
+    comb1 = make_comb(num)
+    comb2 = make_comb(num)
+
+    for i in range(len(reslist1)):
+        for key in comb1:
+            comb1[key][i] = reslist1[i][key]
+            comb2[key][i] = reslist2[i][key]
+
+    m200_var1 = comb1['m200_err']**2 + 1.0e12**2
+    m200_var2 = comb2['m200_err']**2 + 1.0e12**2
+    b_var1 = comb1['b_err']**2 + 0.2**2
+    b_var2 = comb2['b_err']**2 + 0.2**2
+
+    # weights = (
+    #     comb1['m200']**2 / m200_var1 +
+    #     comb2['m200']**2 / m200_var2 +
+    #     comb1['b']**2 / b_var1 +
+    #     comb2['b']**2 / b_var2
+    # )
+
+    # weights1 = (
+    #     comb1['m200']**2 / m200_var1 +
+    #     comb1['b']**2 / b_var1
+    # )
+    # weights2 = (
+    #     comb2['m200']**2 / m200_var2 +
+    #     comb2['b']**2 / b_var2
+    # )
+    # weights1 = 1/(
+    #     m200_var1 / comb1['m200']**2 +
+    #     b_var1 / comb1['b']**2
+    # )
+    # weights2 = (
+    #     m200_var2 / comb2['m200']**2 +
+    #     b_var2 / comb2['b']**2
+    # )
+    # weights1 = 1 / b_var1
+    # weights2 = 1 / b_var2
+
+    weights = 1.0/(b_var1 + b_var2)
+
+    print('-'*70)
+    for key in ['m200', 'B', 'b']:
+        # stats = get_stats(
+        #     data1=comb1[key],
+        #     weights1=weights1,
+        #     # data1_err=err1,
+        #     data2=comb2[key],
+        #     weights2=weights2,
+        #     # data2_err=err2,
+        # )
+        m1, m1err = jackknife(data=comb1[key], weights=weights)
+        m2, m2err = jackknife(data=comb2[key], weights=weights)
+
+        rat, rat_err = jackknife_ratio_sameweight(
+            data1=comb1[key],
+            data2=comb2[key],
+            weights=weights,
+        )
+
+        print('%s means:' % key)
+        # print('%s1: %g +/- %g' % (key, stats['m1'], stats['m1err']))
+        # print('%s2: %g +/- %g' % (key, stats['m2'], stats['m2err']))
+        # print(
+        #     '%s ratio of means:  '
+        #     '%g +/- %g' % (key, stats['rat'], stats['rat_err'])
+        # )
+        print('%s1: %g +/- %g' % (key, m1, m1err))
+        print('%s2: %g +/- %g' % (key, m2, m2err))
+        print(
+            '%s ratio of means:  '
+            '%g +/- %g' % (key, rat, rat_err)
+        )
+
+        diff, diff_err = jackknife(
+            data=comb1[key] - comb2[key],
+            weights=weights,
+        )
+        print('%s diff: %g +/- %g' % (key, diff, diff_err))
 
 
 def get_y1_nofz(*, data, lbin, sbin, sample=False):
