@@ -1,5 +1,7 @@
 import numpy as np
 import esutil as eu
+import fitsio
+import dsfit
 
 
 Y3_MVALS = [
@@ -25,6 +27,17 @@ Y1_ZS_OFFSETS = np.array([
     (-1.8, 2.2),
 ])
 Y1_ZS_OFFSETS /= 100
+
+
+def get_cosmo_pars_from_cc(cc):
+    # return dsfit.get_cosmo_pars()
+    return dsfit.get_cosmo_pars(
+        omega_m=cc.Om0,
+        omega_b=cc.Ob0,
+        sigma_8=cc.sigma8,
+        h=cc.H0/100,
+        ns=cc.ns,
+    )
 
 
 def interpolate_y1_onto_y3(r3, r1, ds1):
@@ -185,7 +198,6 @@ def jackknife_ratio(*, data1, weights1, data2, weights2, doplot=False):
 
     if doplot:
         import hickory
-        # hickory.hist( (rats - rats.mean())*fac*np.sqrt(data1.size) + rats.mean()
         plt = hickory.Plot()
         plt.hist((rats - rats.mean())*fac + rats.mean(), bins=20)
         plt.show()
@@ -342,6 +354,21 @@ def get_oneplusm(*, sbin, source_type, sample=False, use_y1_m=False):
     return oneplusm
 
 
+def write_delta_sigma(*, filename, data):
+    add_dt = [
+        ('rmpc', 'f8'),
+        ('delta_sigma', 'f8'),
+    ]
+    dsout = eu.numpy_util.add_fields(data['gammat'], add_dt)
+    dsout['rmpc'] = data['r']
+    dsout['delta_sigma'] = data['ds']
+
+    print('writing:', filename)
+    with fitsio.FITS(filename, 'rw', clobber=True) as fits:
+        fits.write(dsout, extname='delta_sigma')
+        fits.write(data['dscov'], extname='delta_sigma_cov')
+
+
 def add_rescaled_data(
     *, data, cosmo_pars, source_type,
     sample=False, use_y1_m=False,
@@ -352,6 +379,9 @@ def add_rescaled_data(
     data['r'] = np.zeros(npts)
     data['ds'] = np.zeros(npts)
     data['dscov'] = np.zeros((npts, npts))
+
+    # one for each lens bin
+    data['zl_mean'] = np.zeros(5)
 
     for lbin in range(1, 5+1):
         for sbin in range(1, 4+1):
@@ -373,7 +403,7 @@ def add_rescaled_data(
                 cosmo_pars=cosmo_pars,
             )
 
-            data['zl_mean'] = get_mean_z(
+            data['zl_mean'][lbin-1] = get_mean_z(
                 z=zdata['lzbin'],
                 nz=zdata['lnofz'],
             )

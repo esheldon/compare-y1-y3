@@ -8,8 +8,11 @@ from compare_y1_y3.util import (
     Y3_CHI_FACTORS,
     print_stats,
     add_rescaled_data,
+    write_delta_sigma,
+    get_cosmo_pars_from_cc,
 )
-import dsfit
+
+from colossus.cosmology.cosmology import setCosmology as ccSetCosmology
 
 
 y3sources = '2pt_NG_final_2ptunblind_11_13_20_wnz.fits'
@@ -78,7 +81,7 @@ def read_data():
     return data
 
 
-def do_fits(*, rng, data, cosmo_pars):
+def do_fits(*, rng, data, cc):
 
     tab_y1area = make_table()
     tab_y3area = make_table()
@@ -89,12 +92,12 @@ def do_fits(*, rng, data, cosmo_pars):
         res_y1area = fit_nfw_lin(
             rng=rng, data=data['y1area'],
             lbin=lbin, sbin=sbin, plt=tab_y1area.axes[iax],
-            cosmo_pars=cosmo_pars,
+            cc=cc,
         )
         res_y3area = fit_nfw_lin(
             rng=rng, data=data['y3area'],
             lbin=lbin, sbin=sbin, plt=tab_y3area.axes[iax],
-            cosmo_pars=cosmo_pars,
+            cc=cc,
         )
 
         reslist.append({
@@ -118,6 +121,8 @@ def make_comb(n):
         'c_err': np.zeros(n),
         'B': np.zeros(n),
         'B_err': np.zeros(n),
+        'b': np.zeros(n),
+        'b_err': np.zeros(n),
     }
 
 
@@ -132,7 +137,7 @@ def get_stats(*, reslist):
             comb_y3area[key][i] = res['y3area'][key]
 
     print('-'*70)
-    for key in ['m200', 'B']:
+    for key in ['m200', 'B', 'b']:
         if key == 'm200':
             extra_err = 1.0e12
         else:
@@ -179,7 +184,11 @@ def main():
     args = get_args()
     rng = np.random.RandomState(args.seed)
 
-    cosmo_pars = dsfit.cosmopars.get_cosmo_pars()
+    cc = ccSetCosmology('planck18')
+    # cosmo_pars = get_cosmo_pars_from_cc(cc)
+    import dsfit
+    cosmo_pars = dsfit.get_cosmo_pars()
+    print('cosmo_pars:', cosmo_pars)
 
     data = read_data()
 
@@ -192,8 +201,13 @@ def main():
         cosmo_pars=cosmo_pars,
     )
 
+    y1area_ds_file = 'y3lenses-y3sources-y1area-delta-sigma.fits'
+    write_delta_sigma(filename=y1area_ds_file, data=data['y1area'])
+    y3area_ds_file = 'y3lenses-y3sources-y3area-delta-sigma.fits'
+    write_delta_sigma(filename=y3area_ds_file, data=data['y3area'])
+
     reslist, tab_y1area, tab_y3area = do_fits(
-        rng=rng, data=data, cosmo_pars=cosmo_pars,
+        rng=rng, data=data, cc=cc,
     )
     get_stats(reslist=reslist)
 

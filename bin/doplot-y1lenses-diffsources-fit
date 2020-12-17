@@ -9,8 +9,11 @@ from compare_y1_y3.util import (
     # interpolate_y1_onto_y3,
     print_stats,
     add_rescaled_data,
+    write_delta_sigma,
+    get_cosmo_pars_from_cc,
 )
-import dsfit
+# import dsfit
+from colossus.cosmology.cosmology import setCosmology as ccSetCosmology
 
 # public data vectors for Y1
 y1lenses_y1sources = '2pt_NG_mcal_1110.fits'
@@ -246,7 +249,7 @@ def make_table():
     return tab
 
 
-def do_fits(*, rng, data, cosmo_pars):
+def do_fits(*, rng, data, cc):
 
     tab_y1y1 = make_table()
     tab_y1y3 = make_table()
@@ -257,12 +260,12 @@ def do_fits(*, rng, data, cosmo_pars):
         res_y1y1 = fit_nfw_lin(
             rng=rng, data=data['y1y1'],
             lbin=lbin, sbin=sbin, plt=tab_y1y1.axes[iax],
-            cosmo_pars=cosmo_pars,
+            cc=cc,
         )
         res_y1y3 = fit_nfw_lin(
             rng=rng, data=data['y1y3'],
             lbin=lbin, sbin=sbin, plt=tab_y1y3.axes[iax],
-            cosmo_pars=cosmo_pars,
+            cc=cc,
         )
 
         reslist.append({
@@ -337,6 +340,8 @@ def make_comb(n):
         'c_err': np.zeros(n),
         'B': np.zeros(n),
         'B_err': np.zeros(n),
+        'b': np.zeros(n),
+        'b_err': np.zeros(n),
     }
 
 
@@ -351,10 +356,12 @@ def get_stats(*, reslist):
             comb_y1y3[key][i] = res['y1y3'][key]
 
     print('-'*70)
-    for key in ['m200', 'B']:
+    for key in ['m200', 'B', 'b']:
 
         if key == 'm200':
             extra_err = 1.0e12
+        elif key == 'b':
+            extra_err = 0.2
         else:
             extra_err = 0.05
 
@@ -377,7 +384,9 @@ def main():
     args = get_args()
     rng = np.random.RandomState(args.seed)
 
-    cosmo_pars = dsfit.cosmopars.get_cosmo_pars()
+    cc = ccSetCosmology('planck18')
+    # cosmo_pars = dsfit.cosmopars.get_cosmo_pars()
+    cosmo_pars = get_cosmo_pars_from_cc(cc)
 
     if args.use_rerun:
         data = read_data_rerun()
@@ -412,7 +421,7 @@ def main():
             )
 
             reslist, tab_y1y1, tab_y1y3 = do_fits(
-                rng=rng, data=data, cosmo_pars=cosmo_pars,
+                rng=rng, data=data, cc=cc,
             )
 
     else:
@@ -427,8 +436,13 @@ def main():
             cosmo_pars=cosmo_pars,
         )
 
+        y1y1_ds_file = 'y1lenses-y1sources-y1area-delta-sigma.fits'
+        write_delta_sigma(filename=y1y1_ds_file, data=data['y1y1'])
+        y1y3_ds_file = 'y1lenses-y3sources-y1area-delta-sigma.fits'
+        write_delta_sigma(filename=y1y3_ds_file, data=data['y1y3'])
+
         reslist, tab_y1y1, tab_y1y3 = do_fits(
-            rng=rng, data=data, cosmo_pars=cosmo_pars,
+            rng=rng, data=data, cc=cc,
         )
         get_stats(reslist=reslist)
 
