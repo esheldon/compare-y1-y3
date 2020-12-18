@@ -160,12 +160,19 @@ def main():
     y1area_reslist, y3area_reslist, tab_y1area, tab_y3area = do_fits(
         rng=rng, data=data, cc=cc,
     )
-    print_stats(reslist1=y1area_reslist, reslist2=y3area_reslist)
+    tab = print_stats(
+        reslist1=y1area_reslist, reslist2=y3area_reslist,
+        label1='y1 area', label2='y3 area',
+        title='y3 lenses and sources',
+    )
+    pngname = 'y3lenses-y3sources-diffarea-weighthist.png'
+    print('writing:', pngname)
+    tab.savefig(pngname, dpi=100)
 
     dpi = 75
 
-    y1area_fname = 'fits-y3lenses-y1area.png'
-    y3area_fname = 'fits-y3lenses-y3area.png'
+    y1area_fname = 'y3lenses-y3sources-y1area-fits.png'
+    y3area_fname = 'y3lenses-y3sources-y3area-fits.png'
 
     print('writing:', y1area_fname)
     tab_y1area.savefig(y1area_fname, dpi=dpi)

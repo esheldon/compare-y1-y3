@@ -10,7 +10,6 @@ from compare_y1_y3.util import (
     print_stats,
     add_rescaled_data,
     write_delta_sigma,
-    get_cosmo_pars_from_cc,
 )
 # import dsfit
 from colossus.cosmology.cosmology import setCosmology as ccSetCosmology
@@ -249,7 +248,7 @@ def make_table():
     return tab
 
 
-def do_fits(*, rng, data, cc):
+def do_fits(*, rng, data, cosmo):
 
     tab_y1y1 = make_table()
     tab_y1y3 = make_table()
@@ -261,12 +260,12 @@ def do_fits(*, rng, data, cc):
         res_y1y1 = fit_nfw_lin(
             rng=rng, data=data['y1y1'],
             lbin=lbin, sbin=sbin, plt=tab_y1y1.axes[iax],
-            cc=cc,
+            cosmo=cosmo,
         )
         res_y1y3 = fit_nfw_lin(
             rng=rng, data=data['y1y3'],
             lbin=lbin, sbin=sbin, plt=tab_y1y3.axes[iax],
-            cc=cc,
+            cosmo=cosmo,
         )
 
         y1y1_reslist.append(res_y1y1)
@@ -335,9 +334,7 @@ def main():
     args = get_args()
     rng = np.random.RandomState(args.seed)
 
-    cc = ccSetCosmology('planck18')
-    # cosmo_pars = dsfit.cosmopars.get_cosmo_pars()
-    cosmo_pars = get_cosmo_pars_from_cc(cc)
+    cosmo = ccSetCosmology('planck18')
 
     if args.use_rerun:
         data = read_data_rerun()
@@ -361,30 +358,30 @@ def main():
                 source_type='y1',
                 sample=args.sample,
                 use_y1_m=args.use_y1_m,
-                cosmo_pars=cosmo_pars,
+                cosmo=cosmo,
             )
             add_rescaled_data(
                 data=data['y1y3'],
                 source_type='y3',
                 sample=args.sample,
                 use_y1_m=args.use_y1_m,
-                cosmo_pars=cosmo_pars,
+                cosmo=cosmo,
             )
 
             y1y1_reslist, y1y3_reslist, tab_y1y1, tab_y1y3 = do_fits(
-                rng=rng, data=data, cc=cc,
+                rng=rng, data=data, cosmo=cosmo,
             )
 
     else:
         add_rescaled_data(
             data=data['y1y1'], source_type='y1',
             use_y1_m=args.use_y1_m,
-            cosmo_pars=cosmo_pars,
+            cosmo=cosmo,
         )
         add_rescaled_data(
             data=data['y1y3'], source_type='y3',
             use_y1_m=args.use_y1_m,
-            cosmo_pars=cosmo_pars,
+            cosmo=cosmo,
         )
 
         y1y1_ds_file = 'y1lenses-y1sources-y1area-delta-sigma.fits'
@@ -393,9 +390,16 @@ def main():
         write_delta_sigma(filename=y1y3_ds_file, data=data['y1y3'])
 
         y1y1_reslist, y1y3_reslist, tab_y1y1, tab_y1y3 = do_fits(
-            rng=rng, data=data, cc=cc,
+            rng=rng, data=data, cosmo=cosmo,
         )
-        print_stats(reslist1=y1y1_reslist, reslist2=y1y3_reslist)
+        tab = print_stats(
+            reslist1=y1y1_reslist, reslist2=y1y3_reslist,
+            label1='y1 sources', label2='y3 sources',
+            title='y1 lenses, different sources',
+        )
+        pngname = 'y1lenses-diffsources-weighthist.png'
+        print('writing:', pngname)
+        tab.savefig(pngname, dpi=100)
 
         dpi = 75
         print('writing:', y1y1_fname)

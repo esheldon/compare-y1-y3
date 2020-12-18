@@ -1,8 +1,6 @@
 import numpy as np
 import esutil as eu
 import fitsio
-import dsfit
-
 
 Y3_MVALS = [
     (-0.006, 0.008),
@@ -27,17 +25,6 @@ Y1_ZS_OFFSETS = np.array([
     (-1.8, 2.2),
 ])
 Y1_ZS_OFFSETS /= 100
-
-
-def get_cosmo_pars_from_cc(cc):
-    # return dsfit.get_cosmo_pars()
-    return dsfit.get_cosmo_pars(
-        omega_m=cc.Om0,
-        omega_b=cc.Ob0,
-        sigma_8=cc.sigma8,
-        h=cc.H0/100,
-        ns=cc.ns,
-    )
 
 
 def interpolate_y1_onto_y3(r3, r1, ds1):
@@ -76,13 +63,13 @@ def interpolate_y1_onto_y3(r3, r1, ds1):
     return ds1_interp
 
 
-def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs, cosmo_pars):
+def inv_sigma_crit_eff_fast(*, zlbin, nzl, zsbin, nzs, cosmo):
     """
     from Carles and Judit
     """
     c = eu.cosmology.Cosmo(
-        omega_m=cosmo_pars['omega_m'],
-        h=cosmo_pars['h'],
+        omega_m=cosmo.Om0,
+        H0=cosmo.H0,
     )
 
     dzl = zlbin[1]-zlbin[0]
@@ -254,8 +241,6 @@ def make_comb(n):
         'm200_err': np.zeros(n),
         'c': np.zeros(n),
         'c_err': np.zeros(n),
-        'B': np.zeros(n),
-        'B_err': np.zeros(n),
         'b': np.zeros(n),
         'b_err': np.zeros(n),
     }
@@ -284,7 +269,90 @@ def get_stats(*, data1, weights1, data2, weights2, doplot=False):
     }
 
 
-def print_stats(*, reslist1, reslist2):
+def plot_all_hist_gausserr(*, comb1, comb2, label1, label2, title):
+
+    import hickory
+    tab = hickory.Table(
+        figsize=(8, 8),
+        nrows=2,
+    )
+    tab.suptitle(title)
+
+    for i, key in enumerate(['m200', 'b']):
+
+        errkey = '%s_err' % key
+        vals1 = comb1[key]
+        err1 = comb1[errkey]
+        vals2 = comb2[key]
+        err2 = comb2[errkey]
+
+        mn1, mnerr1, msig1 = eu.stat.wmom(
+            vals1, 1.0/err1**2,
+            sdev=True,
+        )
+        mn2, mnerr2, msig2 = eu.stat.wmom(
+            vals2, 1.0/err2**2,
+            sdev=True,
+        )
+        # nsig = 8
+        # minval = min(mn1 - nsig*msig1, mn2 - nsig*msig2)
+        # maxval = max(mn1 + nsig*msig1, mn2 + nsig*msig2)
+
+        nsig = 3
+        minval = min(
+            (vals1 - nsig*err1).min(),
+            (vals2 - nsig*err2).min(),
+        )
+        maxval = max(
+            (vals1 + nsig*err1).max(),
+            (vals2 + nsig*err2).max(),
+        )
+
+        tab[i].set(xlabel=key)
+        # tab[i].set_yscale('log')
+
+        nbin = 10000
+        x1, res1 = plot_hist_gausserr(
+            plt=tab[i],
+            centers=vals1,
+            sigmas=err1,
+            min=minval,
+            max=maxval,
+            nbin=nbin,
+            label='%s %s' % (key, label1),
+        )
+        x2, res2 = plot_hist_gausserr(
+            plt=tab[i],
+            centers=vals2,
+            sigmas=err2,
+            min=minval,
+            max=maxval,
+            nbin=nbin,
+            label='%s %s' % (key, label2),
+        )
+
+        # w, = np.where(
+        #     (res1 > 0.01*res1.max()) |
+        #     (res2 > 0.01*res2.max())
+        # )
+        # xlim = (x1[w].min(), x1[w].max())
+        if key == 'm200':
+            xlim = (-3.e13, 5*1.e13)
+        elif key == 'b':
+            xlim = (-5, 15)
+        else:
+            raise ValueError('bad key')
+        tab[i].set(
+            xlim=xlim,
+            ylim=(0, None),
+        )
+
+        tab[i].legend()
+
+    return tab
+
+
+def print_stats(*, reslist1, reslist2, label1, label2, title):
     num = len(reslist1)
     comb1 = make_comb(num)
     comb2 = make_comb(num)
@@ -294,8 +362,13 @@ def print_stats(*, reslist1, reslist2):
             comb1[key][i] = reslist1[i][key]
             comb2[key][i] = reslist2[i][key]
 
-    m200_var1 = comb1['m200_err']**2 + 1.0e12**2
-    m200_var2 = comb2['m200_err']**2 + 1.0e12**2
+    tab = plot_all_hist_gausserr(
+        comb1=comb1, comb2=comb2,
+        label1=label1, label2=label2,
+        title=title,
+    )
+    # m200_var1 = comb1['m200_err']**2 + 1.0e12**2
+    # m200_var2 = comb2['m200_err']**2 + 1.0e12**2
     b_var1 = comb1['b_err']**2 + 0.2**2
     b_var2 = comb2['b_err']**2 + 0.2**2
 
@@ -328,7 +401,7 @@ def print_stats(*, reslist1, reslist2):
     weights = 1.0/(b_var1 + b_var2)
 
     print('-'*70)
-    for key in ['m200', 'B', 'b']:
+    for key in ['m200', 'b']:
         # stats = get_stats(
         #     data1=comb1[key],
         #     weights1=weights1,
@@ -365,6 +438,8 @@ def print_stats(*, reslist1, reslist2):
             weights=weights,
         )
         print('%s diff: %g +/- %g' % (key, diff, diff_err))
+
+    return tab
 
 
 def get_y1_nofz(*, data, lbin, sbin, sample=False):
@@ -509,7 +584,7 @@ def write_delta_sigma(*, filename, data):
 
 
 def add_rescaled_data(
-    *, data, cosmo_pars, source_type,
+    *, data, cosmo, source_type,
     sample=False, use_y1_m=False,
 ):
 
@@ -539,7 +614,7 @@ def add_rescaled_data(
                 nzl=zdata['lnofz'],
                 zsbin=zdata['szbin'],
                 nzs=zdata['snofz'],
-                cosmo_pars=cosmo_pars,
+                cosmo=cosmo,
             )
 
             data['zl_mean'][lbin-1] = get_mean_z(
@@ -571,3 +646,22 @@ def add_rescaled_data(
 
             data['ds'][w] = ds
             data['dscov'][imin:imax, imin:imax] = cov
+
+
+def plot_hist_gausserr(*, plt, centers, sigmas, min, max, nbin, label):
+    x = np.linspace(min, max, nbin)
+    res = sum_gaussians(x=x, centers=centers, sigmas=sigmas)
+    # plt.curve(x, res, label=label)
+    plt.fill_between(x, res, alpha=0.5, label=label)
+
+    return x, res
+
+
+def sum_gaussians(*, x, centers, sigmas):
+    import scipy.stats
+    res = x*0
+
+    for cen, sigma in zip(centers, sigmas):
+        res += scipy.stats.norm.pdf(x, loc=cen, scale=sigma)
+
+    return res
