@@ -12,7 +12,7 @@ from compare_y1_y3.util import (
     get_cosmo_pars_from_cc,
 )
 
-from colossus.cosmology.cosmology import setCosmology as ccSetCosmology
+import dsfit
 
 
 y3sources = '2pt_NG_final_2ptunblind_11_13_20_wnz.fits'
@@ -137,9 +137,7 @@ def main():
     args = get_args()
     rng = np.random.RandomState(args.seed)
 
-    cc = ccSetCosmology('planck18')
-    cosmo_pars = get_cosmo_pars_from_cc(cc)
-    print('cosmo_pars:', cosmo_pars)
+    cosmo = dsfit.get_cosmo('planck18')
 
     data = read_data()
 

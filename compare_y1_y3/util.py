@@ -237,10 +237,9 @@ def jackknife_ratio_sameweight(*, data1, data2, weights, doplot=False):
 
 def make_comb(n):
     return {
-        'm200': np.zeros(n),
-        'm200_err': np.zeros(n),
+        'lm200': np.zeros(n),
+        'lm200_err': np.zeros(n),
         'c': np.zeros(n),
-        'c_err': np.zeros(n),
         'b': np.zeros(n),
         'b_err': np.zeros(n),
     }
@@ -278,7 +277,7 @@ def plot_all_hist_gausserr(*, comb1, comb2, label1, label2, title):
     )
     tab.suptitle(title)
 
-    for i, key in enumerate(['m200', 'b']):
+    for i, key in enumerate(['lm200', 'b']):
 
         errkey = '%s_err' % key
         vals1 = comb1[key]
@@ -309,7 +308,6 @@ def plot_all_hist_gausserr(*, comb1, comb2, label1, label2, title):
         )
 
         tab[i].set(xlabel=key)
-        # tab[i].set_yscale('log')
 
         nbin = 10000
         x1, res1 = plot_hist_gausserr(
@@ -336,8 +334,8 @@ def plot_all_hist_gausserr(*, comb1, comb2, label1, label2, title):
         #     (res2 > 0.01*res2.max())
         # )
         # xlim = (x1[w].min(), x1[w].max())
-        if key == 'm200':
-            xlim = (-3.e13, 5*1.e13)
+        if key == 'lm200':
+            xlim = (-13.5, 13.5)
         elif key == 'b':
             xlim = (-5, 15)
         else:
@@ -401,7 +399,7 @@ def print_stats(*, reslist1, reslist2, label1, label2, title):
     weights = 1.0/(b_var1 + b_var2)
 
     print('-'*70)
-    for key in ['m200', 'b']:
+    for key in ['lm200', 'b']:
         # stats = get_stats(
         #     data1=comb1[key],
         #     weights1=weights1,

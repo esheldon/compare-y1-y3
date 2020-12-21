@@ -12,7 +12,7 @@ from compare_y1_y3.util import (
     write_delta_sigma,
 )
 # import dsfit
-from colossus.cosmology.cosmology import setCosmology as ccSetCosmology
+import dsfit
 
 # public data vectors for Y1
 y1lenses_y1sources = '2pt_NG_mcal_1110.fits'
@@ -334,7 +334,7 @@ def main():
     args = get_args()
     rng = np.random.RandomState(args.seed)
 
-    cosmo = ccSetCosmology('planck18')
+    cosmo = dsfit.get_cosmo('planck18')
 
     if args.use_rerun:
         data = read_data_rerun()
