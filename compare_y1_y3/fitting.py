@@ -7,6 +7,28 @@ def fit_nfw_lin(*, rng, data, sbin, lbin, plt, cosmo):
     cc is a colossus.cosmology.cosmology.setCosmology('planck18')
     """
 
+    xlim = (0.25, 185)
+    ylim = (0.025, 45)
+    resid_axis_kw = {
+        'xlim': xlim,
+        'ylim': (-5.3, 5.3),
+        # 'ylim': (-1, 1),
+    }
+
+    if lbin == 1:
+        no_resid_yticklabels = False
+        resid_axis_kw['ylabel'] = r'$\Delta$'
+    else:
+        no_resid_yticklabels = True
+
+    if sbin == 4:
+        no_resid_xticklabels = False
+    else:
+        no_resid_xticklabels = True
+
+    if sbin == 4:
+        resid_axis_kw['xlabel'] = r"$r$ [Mpc]"
+
     w, = np.where(
         (data['gammat']['bin1'] == lbin) &
         (data['gammat']['bin2'] == sbin)
@@ -46,13 +68,16 @@ def fit_nfw_lin(*, rng, data, sbin, lbin, plt, cosmo):
     print('b: %(b)g +/- %(b_err)g' % res)
     print('lm200: %(lm200)g +/- %(lm200_err)g' % res)
 
-    dsfit.fit.plot(
+    dsfit.fit.plot_residuals(
         r=r,
+        dsig=dsig,
+        dsigcov=dsigcov,
         z=data['zl_mean'][lbin-1],
         lm200=res['lm200'],
         b=res['b'],
-        dsig=dsig,
-        dsigcov=dsigcov,
+        xlim=xlim, ylim=ylim, resid_axis_kw=resid_axis_kw,
+        no_resid_xticklabels=no_resid_xticklabels,
+        no_resid_yticklabels=no_resid_yticklabels,
         plt=plt,
     )
     x = 0.075
@@ -63,3 +88,33 @@ def fit_nfw_lin(*, rng, data, sbin, lbin, plt, cosmo):
     plt.ntext(x, 0.15, r'b: %(b).3g $\pm$ %(b_err).3g' % res)
 
     return res
+
+
+def make_table():
+    import hickory
+    tab = hickory.Table(
+        nrows=4,
+        ncols=4,
+        constrained_layout=False,
+        sharex=True, sharey=True,
+        figsize=(16, 14),
+        gridspec_kw={'wspace': 0.0, 'hspace': 0.0},
+    )
+    # xlabel=r"$r$ [Mpc]"
+    ylabel = r"$\Delta\Sigma ~ [\mathrm{M}_{\odot} \mathrm{pc}^{-2}]$"
+    for i, j in ((0, 0), (1, 0), (2, 0), (3, 0)):
+        tab[i, j].set(ylabel=ylabel)
+    # for i, j in ((3, 0), (3, 1), (3, 2), (3, 3)):
+    #     tab[i, j].set(ylabel=ylabel)
+
+    for ax in tab.axes:
+        # ax.set(
+        #     xlabel=r"$r$ [Mpc]",
+        #     ylabel=r"$\Delta\Sigma ~ [\mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
+        #     xlim=(0.25, 185),
+        #     ylim=(0.025, 45),
+        # )
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+
+    return tab

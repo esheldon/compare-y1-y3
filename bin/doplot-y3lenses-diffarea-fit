@@ -2,8 +2,7 @@
 
 import fitsio
 import numpy as np
-import hickory
-from compare_y1_y3.fitting import fit_nfw_lin
+from compare_y1_y3 import fitting
 from compare_y1_y3.util import (
     Y3_CHI_FACTORS,
     print_stats,
@@ -82,19 +81,19 @@ def read_data():
 
 def do_fits(*, rng, data, cosmo):
 
-    tab_y1area = make_table()
-    tab_y3area = make_table()
+    tab_y1area = fitting.make_table()
+    tab_y3area = fitting.make_table()
     y1area_reslist = []
     y3area_reslist = []
 
     iax = 0
     for sbin, lbin in BINS2FIT:
-        res_y1area = fit_nfw_lin(
+        res_y1area = fitting.fit_nfw_lin(
             rng=rng, data=data['y1area'],
             lbin=lbin, sbin=sbin, plt=tab_y1area.axes[iax],
             cosmo=cosmo,
         )
-        res_y3area = fit_nfw_lin(
+        res_y3area = fitting.fit_nfw_lin(
             rng=rng, data=data['y3area'],
             lbin=lbin, sbin=sbin, plt=tab_y3area.axes[iax],
             cosmo=cosmo,
@@ -109,27 +108,6 @@ def do_fits(*, rng, data, cosmo):
     tab_y3area.axes[0].legend()
 
     return y1area_reslist, y3area_reslist, tab_y1area, tab_y3area
-
-
-def make_table():
-    tab = hickory.Table(
-        nrows=4,
-        ncols=4,
-        # figsize=(14, 9.3),
-        figsize=(16, 14),
-        # figsize=(18, 14),
-    )
-    for ax in tab.axes:
-        ax.set(
-            xlabel=r"$r$ [Mpc]",
-            ylabel=r"$\Delta\Sigma ~ [\mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
-            xlim=(0.25, 185),
-            ylim=(0.025, 45),
-        )
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-
-    return tab
 
 
 def main():
