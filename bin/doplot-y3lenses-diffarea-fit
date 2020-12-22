@@ -9,7 +9,6 @@ from compare_y1_y3.util import (
     print_stats,
     add_rescaled_data,
     write_delta_sigma,
-    get_cosmo_pars_from_cc,
 )
 
 import dsfit
@@ -81,7 +80,7 @@ def read_data():
     return data
 
 
-def do_fits(*, rng, data, cc):
+def do_fits(*, rng, data, cosmo):
 
     tab_y1area = make_table()
     tab_y3area = make_table()
@@ -93,12 +92,12 @@ def do_fits(*, rng, data, cc):
         res_y1area = fit_nfw_lin(
             rng=rng, data=data['y1area'],
             lbin=lbin, sbin=sbin, plt=tab_y1area.axes[iax],
-            cc=cc,
+            cosmo=cosmo,
         )
         res_y3area = fit_nfw_lin(
             rng=rng, data=data['y3area'],
             lbin=lbin, sbin=sbin, plt=tab_y3area.axes[iax],
-            cc=cc,
+            cosmo=cosmo,
         )
 
         y1area_reslist.append(res_y1area)
@@ -143,11 +142,11 @@ def main():
 
     add_rescaled_data(
         data=data['y1area'], source_type='y3',
-        cosmo_pars=cosmo_pars,
+        cosmo=cosmo,
     )
     add_rescaled_data(
         data=data['y3area'], source_type='y3',
-        cosmo_pars=cosmo_pars,
+        cosmo=cosmo,
     )
 
     y1area_ds_file = 'y3lenses-y3sources-y1area-delta-sigma.fits'
@@ -156,7 +155,7 @@ def main():
     write_delta_sigma(filename=y3area_ds_file, data=data['y3area'])
 
     y1area_reslist, y3area_reslist, tab_y1area, tab_y3area = do_fits(
-        rng=rng, data=data, cc=cc,
+        rng=rng, data=data, cosmo=cosmo,
     )
     tab = print_stats(
         reslist1=y1area_reslist, reslist2=y3area_reslist,
